@@ -1,0 +1,16 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug MGS4 Cheat Trainer",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build",
+            "program": "${workspaceFolder}/MGS4CheatTrainer/bin/Debug/net8.0-windows/MGS4CheatTrainer.exe",
+            "args": [],
+            "cwd": "${workspaceFolder}/MGS4CheatTrainer",
+            "console": "integratedTerminal",
+            "stopAtEntry": false
+        }
+    ]
+}

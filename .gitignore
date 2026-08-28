@@ -1,0 +1,12 @@
+## .NET build output
+bin/
+obj/
+
+## Visual Studio
+.vs/
+*.user
+*.suo
+
+## OS cruft
+Thumbs.db
+.DS_Store
