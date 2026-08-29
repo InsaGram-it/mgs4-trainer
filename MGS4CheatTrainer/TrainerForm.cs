@@ -1,10 +1,7 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
-using System.Drawing.Drawing2D;
-using System.IO;
 using System.Linq;
-using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
@@ -20,10 +17,9 @@ namespace MGS4CheatTrainer
         private const int ValueWidth = 110;
         private const int ButtonLeft = 302;
         private const int ButtonWidth = 60;
-        private const int RowHeight = 25;
+        private const int RowHeight = 32;
 
         private const int StatsPollIntervalMs = 500;
-        private const int ResizeDebounceMs = 150;
 
         private readonly Process _gameProcess;
         private readonly IntPtr _processHandle;
@@ -32,8 +28,8 @@ namespace MGS4CheatTrainer
         private readonly Label _status;
         private readonly TabControl _tabs;
         private readonly System.Windows.Forms.Timer _statsTimer;
-        private readonly System.Windows.Forms.Timer _resizeDebounceTimer;
-        private Bitmap? _wallpaperSource;
+
+       private const string UiFontFamily = "Verdana";
 
         private bool _suppressEvents;
         private bool _gameClosedHandled;
@@ -50,14 +46,25 @@ namespace MGS4CheatTrainer
         private const int RowGap = 6;
         private const int MinFieldWidth = 40;
 
-        private readonly List<(Control Parent, Control Value, Control? Button)> _valueRows = new();
+       private const double LabelWidthFraction = 0.34;
+        private const int MinLabelWidth = 170;
+        private const int MaxLabelWidth = 260;
+
+        private readonly List<(Control Parent, Control? Label, Control Value, Control? Button)> _valueRows = new();
         private readonly List<(Control Parent, Control Control)> _stretchOnly = new();
 
         private void ReflowAll()
         {
-            foreach (var (parent, value, button) in _valueRows)
+            foreach (var (parent, label, value, button) in _valueRows)
             {
                 int rightEdge = parent.ClientSize.Width - RowOuterMargin;
+                if (label != null)
+                {
+                    int labelWidth = Math.Clamp((int)(parent.ClientSize.Width * LabelWidthFraction), MinLabelWidth, MaxLabelWidth);
+                    label.Width = labelWidth;
+                    value.Left = LabelLeft + labelWidth + RowGap;
+                }
+
                 if (button != null)
                 {
                     button.Left = rightEdge - button.Width;
@@ -88,6 +95,9 @@ namespace MGS4CheatTrainer
             _baseAddress = baseAddress;
             _moduleSize = moduleSize;
 
+            AutoScaleMode = AutoScaleMode.Dpi;
+            AutoScaleDimensions = new SizeF(96f, 96f);
+
             Text = "MGS4 Trainer";
             Width = 620;
             Height = 620;
@@ -96,6 +106,7 @@ namespace MGS4CheatTrainer
             MaximizeBox = true;
             StartPosition = FormStartPosition.CenterScreen;
             TopMost = true;
+            Font = new Font(UiFontFamily, 9.5f);
 
             var bottomPanel = new Panel { Dock = DockStyle.Bottom, Height = 46 };
 
@@ -124,11 +135,11 @@ namespace MGS4CheatTrainer
             trademark.Top = bottomPanel.ClientSize.Height - trademark.Height - 4;
 
             _tabs = new TabControl { Dock = DockStyle.Fill };
-            _tabs.TabPages.Add(BuildCheatsTab());
             _tabs.TabPages.Add(BuildStatsTab());
-            // A tab page only gets its real size once it's actually been selected/shown -- reflow and
-            // recomposite the wallpaper again each time the visible tab changes, to catch whichever
-            // page was still unsized (and so still showing a flat fallback color) until now.
+            _tabs.TabPages.Add(BuildCheatsTab());
+            // A tab page only gets its real size once it's actually been selected/shown -- reflow
+            // again each time the visible tab changes, to catch whichever page was still unsized
+            // until now.
             _tabs.SelectedIndexChanged += (_, _) => OnVisibleTabChanged();
 
             Controls.Add(_tabs);
@@ -137,25 +148,8 @@ namespace MGS4CheatTrainer
             ApplyDarkTheme(this);
             bottomPanel.BackColor = ColorSurface;
 
-            _resizeDebounceTimer = new System.Windows.Forms.Timer { Interval = ResizeDebounceMs };
-            _resizeDebounceTimer.Tick += (_, _) =>
-            {
-                _resizeDebounceTimer.Stop();
-                ApplyWallpaperBackgrounds();
-            };
-            // Row positions are cheap to recompute, so that happens on every resize tick directly; only
-            // the wallpaper recomposite (an actual bitmap redraw) waits for dragging to stop.
-            Resize += (_, _) =>
-            {
-                ReflowAll();
-                _resizeDebounceTimer.Stop();
-                _resizeDebounceTimer.Start();
-            };
-            Load += (_, _) =>
-            {
-                _wallpaperSource = LoadEmbeddedWallpaper();
-                OnVisibleTabChanged();
-            };
+            Resize += (_, _) => ReflowAll();
+            Load += (_, _) => OnVisibleTabChanged();
 
             // Live-poll the Stats tab so values track the game without a manual refresh, and use the
             // same tick to notice the game process closing (all reads/writes go quietly nowhere against
@@ -171,11 +165,7 @@ namespace MGS4CheatTrainer
                 RefreshStats(manual: false);
             };
             _statsTimer.Start();
-            FormClosed += (_, _) =>
-            {
-                _statsTimer.Stop();
-                _resizeDebounceTimer.Stop();
-            };
+            FormClosed += (_, _) => _statsTimer.Stop();
         }
 
         [DllImport("dwmapi.dll", PreserveSig = true)]
@@ -218,7 +208,6 @@ namespace MGS4CheatTrainer
         private void OnVisibleTabChanged()
         {
             ReflowAll();
-            ApplyWallpaperBackgrounds();
         }
 
         #region Cheats tab (code-patch toggles)
@@ -542,9 +531,115 @@ namespace MGS4CheatTrainer
         };
 
         private readonly Dictionary<string, (StatField Field, TextBox Box)> _statFields = new();
+        private readonly List<(TextBox Box, long Offset)> _tickDisplayBoxes = new();
         private TextBox _stageCodeBox = null!;
-        private TextBox _playTimeDisplayBox = null!;
         private ComboBox _difficultyCombo = null!;
+
+        // Snapshot of the linkvarbuf fields the 40 emblem predicates need, read once per stats tick.
+        private sealed record EmblemMetrics(
+            ushort Difficulty, ushort Alerts, ushort Kills, ushort Continues, ushort Recovery,
+            ushort SpecialItemUse, uint PlayTimeTicks, ushort CqcUses, ushort Headshots,
+            ushort KnifeKills, ushort KnifeKnockouts, ushort ItemsDonated, ushort Praises,
+            ushort BodySearches, ushort HoldUps, uint BoxDrumA, uint BoxDrumB, ushort PlayboyPages,
+            ushort SyringeUses, ushort ScanningPlugUses, uint WallPressTime, ushort ProneSideRolls,
+            ushort ForwardRolls, uint CrawlTime, uint CrouchTime, ushort WeaponPickups,
+            ushort ItemPickups, ushort CombatHighs)
+        {
+            public double Hours => PlayTimeTicks / 216000.0; // 60 ticks/sec * 3600 sec/hour
+            public double KnifeDefeats => KnifeKills + KnifeKnockouts;
+            public double MedicalUses => SyringeUses + ScanningPlugUses;
+            public double BoxDrumMinutes => (BoxDrumA + BoxDrumB) / 3600.0; // 60 ticks/sec * 60 sec/min
+            public double WallPressMinutes => WallPressTime / 3600.0;
+            public double CrawlMinutes => CrawlTime / 3600.0;
+            public double CrouchMinutes => CrouchTime / 3600.0;
+            public double PickupsTotal => WeaponPickups + ItemPickups;
+        }
+
+        private static readonly (string Name, string Description, Func<EmblemMetrics, bool?> Check)[] EmblemRules =
+        {
+            ("BIG BOSS", "Extreme; 0 alerts/kills/continues/recovery; ≤5h; no special item",
+                m => m.Difficulty == 50 && m.Alerts == 0 && m.Kills == 0 && m.Continues == 0 && m.Recovery == 0 && m.SpecialItemUse == 0 && m.Hours <= 5),
+            ("FOX HOUND", "Hard+; ≤3 alerts; 0 kills/continues/recovery; ≤5.5h; no special item",
+                m => m.Difficulty >= 40 && m.Alerts <= 3 && m.Kills == 0 && m.Continues == 0 && m.Recovery == 0 && m.SpecialItemUse == 0 && m.Hours <= 5.5),
+            ("FOX", "Solid Normal+; ≤5 alerts; 0 kills/continues/recovery; ≤6h; no special item",
+                m => m.Difficulty >= 35 && m.Alerts <= 5 && m.Kills == 0 && m.Continues == 0 && m.Recovery == 0 && m.SpecialItemUse == 0 && m.Hours <= 6),
+            ("HOUND", "Naked Normal+; ≤10 alerts; 0 kills/continues/recovery; ≤6.5h; no special item",
+                m => m.Difficulty >= 30 && m.Alerts <= 10 && m.Kills == 0 && m.Continues == 0 && m.Recovery == 0 && m.SpecialItemUse == 0 && m.Hours <= 6.5),
+            ("MANTIS", "0 alerts/continues/recovery; ≤5h",
+                m => m.Alerts == 0 && m.Continues == 0 && m.Recovery == 0 && m.Hours <= 5),
+            ("WOLF", "0 continues; 0 recovery items",
+                m => m.Continues == 0 && m.Recovery == 0),
+            ("RAVEN", "Finish in ≤5h",
+                m => m.Hours <= 5),
+            ("OCTOPUS", "0 alert phases",
+                m => m.Alerts == 0),
+            ("BEAR", "≥100 CQC holds",
+                m => m.CqcUses >= 100),
+            ("EAGLE", "≥150 headshots",
+                m => m.Headshots >= 150),
+            ("ASSASSIN", "≥50 knife kills/stuns; ≥50 CQC holds; ≤25 alerts",
+                m => m.KnifeDefeats >= 50 && m.CqcUses >= 50 && m.Alerts <= 25),
+            ("PIGEON", "0 kills",
+                m => m.Kills == 0),
+            ("BLUE BIRD", "≥50 items donated",
+                m => m.ItemsDonated >= 50),
+            ("HAWK", "≥25 praises from allies",
+                m => m.Praises >= 25),
+            ("LITTLE GRAY", "Collect all 69 weapons (needs weapon-inventory data, not tracked here)",
+                _ => null),
+            ("ANT", "≥50 body searches",
+                m => m.BodySearches >= 50),
+            ("GIBBON", "≥50 hold-ups",
+                m => m.HoldUps >= 50),
+            ("TORTOISE", "≥60 min inside box/drum can",
+                m => m.BoxDrumMinutes >= 60),
+            ("RABBIT", "≥100 Playboy pages turned",
+                m => m.PlayboyPages >= 100),
+            ("BEE", "≥50 Syringe + Scanning Plug uses",
+                m => m.MedicalUses >= 50),
+            ("GECKO", "≥60 min wall-pressing",
+                m => m.WallPressMinutes >= 60),
+            ("SCARAB", "≥100 prone side rolls",
+                m => m.ProneSideRolls >= 100),
+            ("FROG", "≥200 forward rolls",
+                m => m.ForwardRolls >= 200),
+            ("INCH WORM", "≥60 min crawling",
+                m => m.CrawlMinutes >= 60),
+            ("LOBSTER", "≥150 min crouching",
+                m => m.CrouchMinutes >= 150),
+            ("HYENA", "≥400 weapon/item pickups",
+                m => m.PickupsTotal >= 400),
+            ("HOG", "≥10 combat highs",
+                m => m.CombatHighs >= 10),
+            ("PIG", "≥40 recovery items used",
+                m => m.Recovery >= 40),
+            ("COW", "≥100 alert phases",
+                m => m.Alerts >= 100),
+            ("CROCODILE", "≥400 kills",
+                m => m.Kills >= 400),
+            ("GIANT PANDA", "≥30h play time",
+                m => m.Hours >= 30),
+            ("SCORPION", "≤75 alerts, ≤250 kills, ≤25 continues",
+                m => m.Alerts <= 75 && m.Kills <= 250 && m.Continues <= 25),
+            ("TARANTULA", "≤75 alerts, >250 kills, ≤25 continues",
+                m => m.Alerts <= 75 && m.Kills > 250 && m.Continues <= 25),
+            ("CENTIPEDE", "≤75 alerts, ≤250 kills, >25 continues",
+                m => m.Alerts <= 75 && m.Kills <= 250 && m.Continues > 25),
+            ("SPIDER", "≤75 alerts, >250 kills, >25 continues",
+                m => m.Alerts <= 75 && m.Kills > 250 && m.Continues > 25),
+            ("JAGUAR", ">75 alerts, ≤250 kills, ≤25 continues",
+                m => m.Alerts > 75 && m.Kills <= 250 && m.Continues <= 25),
+            ("PANTHER", ">75 alerts, >250 kills, ≤25 continues",
+                m => m.Alerts > 75 && m.Kills > 250 && m.Continues <= 25),
+            ("LEOPARD", ">75 alerts, ≤250 kills, >25 continues",
+                m => m.Alerts > 75 && m.Kills <= 250 && m.Continues > 25),
+            ("PUMA", ">75 alerts, >250 kills, >25 continues",
+                m => m.Alerts > 75 && m.Kills > 250 && m.Continues > 25),
+            ("CHICKEN", "≥150 alerts, ≥500 kills, ≥50 continues, ≥50 recovery, ≥35h",
+                m => m.Alerts >= 150 && m.Kills >= 500 && m.Continues >= 50 && m.Recovery >= 50 && m.Hours >= 35),
+        };
+
+        private readonly List<(Label Status, Func<EmblemMetrics, bool?> Evaluate)> _emblemRows = new();
 
         private TabPage BuildStatsTab()
         {
@@ -567,6 +662,7 @@ namespace MGS4CheatTrainer
             subTabs.TabPages.Add(BuildCombatTab());
             subTabs.TabPages.Add(BuildMovementTab());
             subTabs.TabPages.Add(BuildItemsSocialTab());
+            subTabs.TabPages.Add(BuildEmblemsTab());
             subTabs.SelectedIndexChanged += (_, _) => OnVisibleTabChanged();
 
             page.Controls.Add(subTabs);
@@ -584,8 +680,7 @@ namespace MGS4CheatTrainer
             AddDifficultyRow(page, ref y);
             AddStatRow(page, ref y, "Completed Playthroughs", Constants.LiveStats.CompletedPlaythroughsOffset, StatType.UInt32);
             AddStatRow(page, ref y, "Scenario Progress", Constants.LiveStats.ScenarioProgressOffset, StatType.UInt32);
-            AddStatRow(page, ref y, "Total Play Time (ticks)", Constants.LiveStats.TotalPlayTimeOffset, StatType.UInt32);
-            _playTimeDisplayBox = AddReadOnlyRow(page, ref y, "Total Play Time (H:M:S)");
+            AddTicksRow(page, ref y, "Total Play Time", Constants.LiveStats.TotalPlayTimeOffset);
             AddStatRow(page, ref y, "Drebin Points", Constants.LiveStats.DrebinPointsOffset, StatType.UInt32, Constants.LiveStats.DrebinPointsCopyOffset);
             AddStatRow(page, ref y, "Continues", Constants.LiveStats.ContinuesOffset, StatType.UInt16);
             AddStatRow(page, ref y, "Alert Phases", Constants.LiveStats.AlertsOffset, StatType.UInt16);
@@ -617,11 +712,11 @@ namespace MGS4CheatTrainer
 
             AddStatRow(page, ref y, "Prone Side Rolls", Constants.LiveStats.ProneSideRollsOffset, StatType.UInt16);
             AddStatRow(page, ref y, "Forward Rolls", Constants.LiveStats.ForwardRollsOffset, StatType.UInt16);
-            AddStatRow(page, ref y, "Crouch Time (ticks)", Constants.LiveStats.CrouchTimeOffset, StatType.UInt32);
-            AddStatRow(page, ref y, "Crawl Time (ticks)", Constants.LiveStats.CrawlTimeOffset, StatType.UInt32);
-            AddStatRow(page, ref y, "Wall-Press Time (ticks)", Constants.LiveStats.WallPressTimeOffset, StatType.UInt32);
-            AddStatRow(page, ref y, "Box/Drum Timer A (ticks)", Constants.LiveStats.BoxDrumTimerAOffset, StatType.UInt32);
-            AddStatRow(page, ref y, "Box/Drum Timer B (ticks)", Constants.LiveStats.BoxDrumTimerBOffset, StatType.UInt32);
+            AddTicksRow(page, ref y, "Crouch Time", Constants.LiveStats.CrouchTimeOffset);
+            AddTicksRow(page, ref y, "Crawl Time", Constants.LiveStats.CrawlTimeOffset);
+            AddTicksRow(page, ref y, "Wall-Press Time", Constants.LiveStats.WallPressTimeOffset);
+            AddTicksRow(page, ref y, "Box/Drum Timer A", Constants.LiveStats.BoxDrumTimerAOffset);
+            AddTicksRow(page, ref y, "Box/Drum Timer B", Constants.LiveStats.BoxDrumTimerBOffset);
 
             return page;
         }
@@ -647,6 +742,138 @@ namespace MGS4CheatTrainer
             return page;
         }
 
+        private TabPage BuildEmblemsTab()
+        {
+            var page = new TabPage("Emblems") { AutoScroll = true };
+            int y = 8;
+
+            var noteLabel = new Label
+            {
+                Left = LabelLeft,
+                Top = y,
+                Height = 42,
+                AutoSize = false,
+                Text = "Live progress toward MGS4's 40 completion emblems, judged against a single continuous playthrough",
+                ForeColor = Color.DimGray,
+            };
+            page.Controls.Add(noteLabel);
+            _stretchOnly.Add((page, noteLabel));
+            y += 48;
+
+            foreach (var (name, description, check) in EmblemRules)
+            {
+                AddEmblemRow(page, ref y, name, description, check);
+            }
+
+            return page;
+        }
+
+        private void AddEmblemRow(Control parent, ref int y, string name, string description, Func<EmblemMetrics, bool?> check)
+        {
+            var nameLabel = new Label
+            {
+                Text = name,
+                Left = LabelLeft,
+                Top = y,
+                Width = 240,
+                Height = 18,
+                Font = new Font(Font, FontStyle.Bold),
+            };
+            var statusLabel = new Label
+            {
+                Text = "?",
+                Left = 0,
+                Top = y,
+                Width = 110,
+                Height = 18,
+                TextAlign = ContentAlignment.MiddleRight,
+            };
+            var descLabel = new Label
+            {
+                Text = description,
+                Left = LabelLeft,
+                Top = y + 19,
+                Height = 32,
+                AutoEllipsis = false,
+                ForeColor = ColorTextSecondary,
+                Font = new Font(Font.FontFamily, 8.5f),
+            };
+
+            parent.Controls.Add(nameLabel);
+            parent.Controls.Add(statusLabel);
+            parent.Controls.Add(descLabel);
+            _valueRows.Add((parent, null, nameLabel, statusLabel));
+            _stretchOnly.Add((parent, descLabel));
+            _emblemRows.Add((statusLabel, check));
+            y += 56;
+        }
+
+        private void RefreshEmblems(byte[]? snapshot)
+        {
+            if (snapshot == null)
+            {
+                foreach (var (status, _) in _emblemRows)
+                {
+                    status.Text = "?";
+                    status.ForeColor = ColorTextSecondary;
+                }
+                return;
+            }
+
+            ushort Read16(long offset) => BitConverter.ToUInt16(snapshot, (int)offset);
+            uint Read32(long offset) => BitConverter.ToUInt32(snapshot, (int)offset);
+
+            var metrics = new EmblemMetrics(
+                Read16(Constants.LiveStats.DifficultyOffset),
+                Read16(Constants.LiveStats.AlertsOffset),
+                Read16(Constants.LiveStats.KillsOffset),
+                Read16(Constants.LiveStats.ContinuesOffset),
+                Read16(Constants.LiveStats.RecoveryItemsUsedOffset),
+                Read16(Constants.LiveStats.SpecialItemUseOffset),
+                Read32(Constants.LiveStats.TotalPlayTimeOffset),
+                Read16(Constants.LiveStats.CqcUsesOffset),
+                Read16(Constants.LiveStats.HeadshotsOffset),
+                Read16(Constants.LiveStats.KnifeKillsOffset),
+                Read16(Constants.LiveStats.KnifeKnockoutsOffset),
+                Read16(Constants.LiveStats.ItemsDonatedOffset),
+                Read16(Constants.LiveStats.PraisesOffset),
+                Read16(Constants.LiveStats.BodySearchesOffset),
+                Read16(Constants.LiveStats.HoldUpsOffset),
+                Read32(Constants.LiveStats.BoxDrumTimerAOffset),
+                Read32(Constants.LiveStats.BoxDrumTimerBOffset),
+                Read16(Constants.LiveStats.PlayboyPagesOffset),
+                Read16(Constants.LiveStats.SyringeUsesOffset),
+                Read16(Constants.LiveStats.ScanningPlugUsesOffset),
+                Read32(Constants.LiveStats.WallPressTimeOffset),
+                Read16(Constants.LiveStats.ProneSideRollsOffset),
+                Read16(Constants.LiveStats.ForwardRollsOffset),
+                Read32(Constants.LiveStats.CrawlTimeOffset),
+                Read32(Constants.LiveStats.CrouchTimeOffset),
+                Read16(Constants.LiveStats.WeaponPickupsOffset),
+                Read16(Constants.LiveStats.ItemPickupsOffset),
+                Read16(Constants.LiveStats.CombatHighsOffset));
+
+            foreach (var (status, check) in _emblemRows)
+            {
+                bool? result = check(metrics);
+                if (result == null)
+                {
+                    status.Text = "N/A";
+                    status.ForeColor = ColorTextSecondary;
+                }
+                else if (result.Value)
+                {
+                    status.Text = "✓ Qualified";
+                    status.ForeColor = Color.FromArgb(120, 210, 120);
+                }
+                else
+                {
+                    status.Text = "Not yet";
+                    status.ForeColor = Color.FromArgb(210, 110, 110);
+                }
+            }
+        }
+
         private void AddStatRow(Control parent, ref int y, string label, long offset, StatType type, long? secondaryOffset = null)
         {
             var nameLabel = new Label { Text = label, Left = LabelLeft, Top = y + 3, Width = LabelWidth, AutoEllipsis = true };
@@ -659,7 +886,7 @@ namespace MGS4CheatTrainer
             parent.Controls.Add(nameLabel);
             parent.Controls.Add(textBox);
             parent.Controls.Add(setButton);
-            _valueRows.Add((parent, textBox, setButton));
+            _valueRows.Add((parent, nameLabel, textBox, setButton));
             _statFields[label] = (field, textBox);
             y += RowHeight;
         }
@@ -676,9 +903,16 @@ namespace MGS4CheatTrainer
             };
             parent.Controls.Add(nameLabel);
             parent.Controls.Add(box);
-            _valueRows.Add((parent, box, null));
+            _valueRows.Add((parent, nameLabel, box, null));
             y += RowHeight;
             return box;
+        }
+
+        private void AddTicksRow(Control parent, ref int y, string label, long offset)
+        {
+            AddStatRow(parent, ref y, $"{label} (ticks)", offset, StatType.UInt32);
+            TextBox display = AddReadOnlyRow(parent, ref y, $"{label} (H:M:S)");
+            _tickDisplayBoxes.Add((display, offset));
         }
 
         private void AddDifficultyRow(Control parent, ref int y)
@@ -695,14 +929,16 @@ namespace MGS4CheatTrainer
             parent.Controls.Add(nameLabel);
             parent.Controls.Add(combo);
             parent.Controls.Add(setButton);
-            _valueRows.Add((parent, combo, setButton));
+            _valueRows.Add((parent, nameLabel, combo, setButton));
             _difficultyCombo = combo;
             y += RowHeight;
         }
 
-        // Total play time is stored as 60Hz ticks (per bbtracker's mgs4_research.md); shown alongside
-        // the raw editable value since ticks alone aren't very readable.
-        private static string FormatPlayTime(uint ticks)
+        // Every duration stat in linkvarbuf (play time, crouch/crawl/wall-press time, the box/drum
+        // timers) is stored as 60Hz ticks (per bbtracker's mgs4_research.md), which isn't very
+        // readable on its own -- AddTicksRow pairs the raw editable value with an H:M:S readout
+        // using this.
+        private static string FormatTicksAsTime(uint ticks)
         {
             long totalSeconds = ticks / 60;
             long hours = totalSeconds / 3600;
@@ -718,13 +954,13 @@ namespace MGS4CheatTrainer
             return linkVarBuf == IntPtr.Zero ? null : linkVarBuf;
         }
 
-        // manual: true for the button (updates the status bar and overwrites every field, even a
-        // stale-looking one) vs. false for the background poll (silent, and never fights the user
-        // mid-edit -- a focused text box or an open combo dropdown is left untouched this tick).
+
         private void RefreshStats(bool manual)
         {
             IntPtr? linkVarBuf = ResolveLinkVarBuf();
-            if (linkVarBuf == null)
+            byte[]? snapshot = linkVarBuf == null ? null : MemoryManager.ReadMemoryBytes(_processHandle, linkVarBuf.Value, Constants.LiveStats.SnapshotSize);
+            RefreshEmblems(snapshot);
+            if (linkVarBuf == null || snapshot == null)
             {
                 if (manual)
                 {
@@ -741,20 +977,21 @@ namespace MGS4CheatTrainer
                     continue;
                 }
                 textBox.Text = field.Type == StatType.UInt16
-                    ? MemoryManager.ReadUInt16(_processHandle, IntPtr.Add(linkVarBuf.Value, (int)field.Offset))?.ToString() ?? "?"
-                    : MemoryManager.ReadUInt32(_processHandle, IntPtr.Add(linkVarBuf.Value, (int)field.Offset))?.ToString() ?? "?";
+                    ? BitConverter.ToUInt16(snapshot, (int)field.Offset).ToString()
+                    : BitConverter.ToUInt32(snapshot, (int)field.Offset).ToString();
             }
 
-            if (manual || !_playTimeDisplayBox.Focused)
+            foreach (var (box, offset) in _tickDisplayBoxes)
             {
-                uint? ticks = MemoryManager.ReadUInt32(_processHandle, IntPtr.Add(linkVarBuf.Value, (int)Constants.LiveStats.TotalPlayTimeOffset));
-                _playTimeDisplayBox.Text = ticks.HasValue ? FormatPlayTime(ticks.Value) : "?";
+                if (manual || !box.Focused)
+                {
+                    box.Text = FormatTicksAsTime(BitConverter.ToUInt32(snapshot, (int)offset));
+                }
             }
 
             if (manual || !_stageCodeBox.Focused)
             {
-                byte[]? stageBytes = MemoryManager.ReadMemoryBytes(_processHandle, IntPtr.Add(linkVarBuf.Value, (int)Constants.LiveStats.StageCodeOffset), 7);
-                string rawCode = stageBytes == null ? "?" : Encoding.ASCII.GetString(stageBytes).TrimEnd('\0');
+                string rawCode = Encoding.ASCII.GetString(snapshot, (int)Constants.LiveStats.StageCodeOffset, 7).TrimEnd('\0');
                 _stageCodeBox.Text = Constants.StageNames.ByCode.TryGetValue(rawCode, out string? stageName)
                     ? $"{rawCode} — {stageName}"
                     : rawCode;
@@ -762,16 +999,9 @@ namespace MGS4CheatTrainer
 
             if (manual || (!_difficultyCombo.Focused && !_difficultyCombo.DroppedDown))
             {
-                ushort? difficulty = MemoryManager.ReadUInt16(_processHandle, IntPtr.Add(linkVarBuf.Value, (int)Constants.LiveStats.DifficultyOffset));
-                if (difficulty.HasValue)
-                {
-                    var match = DifficultyLevels.FirstOrDefault(l => l.Value == difficulty.Value);
-                    _difficultyCombo.Text = match.Name ?? $"{difficulty.Value} (unknown)";
-                }
-                else
-                {
-                    _difficultyCombo.Text = "?";
-                }
+                ushort difficulty = BitConverter.ToUInt16(snapshot, (int)Constants.LiveStats.DifficultyOffset);
+                var match = DifficultyLevels.FirstOrDefault(l => l.Value == difficulty);
+                _difficultyCombo.Text = match.Name ?? $"{difficulty} (unknown)";
             }
 
             if (manual)
@@ -851,14 +1081,14 @@ namespace MGS4CheatTrainer
 
         #endregion
 
-        #region Theming (dark palette + embedded wallpaper)
+        #region Theming (dark palette)
 
         private static readonly Color ColorBackground = Color.FromArgb(15, 17, 21);
         private static readonly Color ColorSurface = Color.FromArgb(27, 31, 37);
         private static readonly Color ColorSurfaceRaised = Color.FromArgb(38, 43, 50);
         private static readonly Color ColorAccent = Color.FromArgb(90, 169, 230);
         private static readonly Color ColorTextPrimary = Color.FromArgb(230, 232, 235);
-        private static readonly Color ColorTextSecondary = Color.FromArgb(154, 162, 170);
+        private static readonly Color ColorTextSecondary = Color.FromArgb(176, 183, 190);
 
         // Walks the whole control tree once (after every tab/group/row has been built) applying a
         // dark, flat palette. Kept generic by control type rather than styling each control at the
@@ -889,15 +1119,17 @@ namespace MGS4CheatTrainer
                         checkBox.BackColor = Color.Transparent;
                         checkBox.ForeColor = ColorTextPrimary;
                         checkBox.FlatStyle = FlatStyle.Flat;
+                        checkBox.FlatAppearance.BorderColor = ColorAccent;
+                        checkBox.FlatAppearance.BorderSize = 2;
                         checkBox.FlatAppearance.CheckedBackColor = ColorAccent;
-                        checkBox.FlatAppearance.BorderColor = ColorSurfaceRaised;
+                        checkBox.FlatAppearance.MouseOverBackColor = ControlPaint.Light(ColorSurfaceRaised, 0.2f);
                         break;
                     case Button button:
                         button.FlatStyle = FlatStyle.Flat;
                         button.BackColor = ColorSurfaceRaised;
                         button.ForeColor = ColorTextPrimary;
                         button.FlatAppearance.BorderColor = ColorAccent;
-                        button.FlatAppearance.BorderSize = 1;
+                        button.FlatAppearance.BorderSize = 2;
                         button.FlatAppearance.MouseOverBackColor = ControlPaint.Light(ColorSurfaceRaised, 0.2f);
                         break;
                     case ComboBox comboBox:
@@ -930,7 +1162,7 @@ namespace MGS4CheatTrainer
         {
             tabControl.DrawMode = TabDrawMode.OwnerDrawFixed;
             tabControl.Padding = new Point(12, 5);
-            tabControl.Font = new Font(tabControl.Font.FontFamily, 8.75f);
+            tabControl.Font = new Font(tabControl.Font.FontFamily, 9.5f);
             tabControl.DrawItem -= TabControl_DrawItem;
             tabControl.DrawItem += TabControl_DrawItem;
         }
@@ -952,87 +1184,6 @@ namespace MGS4CheatTrainer
 
             Color textColor = selected ? Color.Black : ColorTextPrimary;
             TextRenderer.DrawText(e.Graphics, page.Text, tabControl.Font, e.Bounds, textColor, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
-        }
-
-        // Composites a darkened, "cover"-scaled copy of the embedded wallpaper behind every tab page
-        // (editable controls sit on their own solid-colored surface on top, so only the empty margins
-        // and the transparent-background labels/checkboxes/group boxes actually show it through).
-        private void ApplyWallpaperBackgrounds()
-        {
-            if (_wallpaperSource == null)
-            {
-                return;
-            }
-
-            foreach (TabPage page in CollectTabPages(this))
-            {
-                if (page.ClientSize.Width <= 0 || page.ClientSize.Height <= 0)
-                {
-                    continue;
-                }
-
-                Image? previous = page.BackgroundImage;
-                page.BackgroundImage = ComposeBackground(_wallpaperSource, page.ClientSize);
-                page.BackgroundImageLayout = ImageLayout.None;
-                previous?.Dispose();
-            }
-        }
-
-        private static IEnumerable<TabPage> CollectTabPages(Control root)
-        {
-            foreach (Control control in root.Controls)
-            {
-                if (control is TabPage page)
-                {
-                    yield return page;
-                }
-                foreach (TabPage nested in CollectTabPages(control))
-                {
-                    yield return nested;
-                }
-            }
-        }
-
-        private static Bitmap? LoadEmbeddedWallpaper()
-        {
-            Assembly assembly = typeof(TrainerForm).Assembly;
-            string? resourceName = Array.Find(assembly.GetManifestResourceNames(), n => n.EndsWith("wallpaper.jpg", StringComparison.OrdinalIgnoreCase));
-            if (resourceName == null)
-            {
-                return null;
-            }
-
-            using Stream? stream = assembly.GetManifestResourceStream(resourceName);
-            if (stream == null)
-            {
-                return null;
-            }
-
-            using Image decoded = Image.FromStream(stream);
-            return new Bitmap(decoded);
-        }
-
-        private static Bitmap ComposeBackground(Image source, Size destSize)
-        {
-            var composed = new Bitmap(destSize.Width, destSize.Height);
-            using Graphics g = Graphics.FromImage(composed);
-            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-
-            float scale = Math.Max((float)destSize.Width / source.Width, (float)destSize.Height / source.Height);
-            int scaledWidth = (int)Math.Ceiling(source.Width * scale);
-            int scaledHeight = (int)Math.Ceiling(source.Height * scale);
-            int offsetY = (destSize.Height - scaledHeight) / 2;
-
-            g.Clear(ColorBackground);
-            // Left-anchored (offsetX = 0): the subject sits on the left of the source image, so a
-            // centered crop would cut into it -- anchoring left keeps it fully in frame instead.
-            g.DrawImage(source, 0, offsetY, scaledWidth, scaledHeight);
-
-            using var overlay = new SolidBrush(Color.FromArgb(180, ColorBackground));
-            g.FillRectangle(overlay, 0, 0, destSize.Width, destSize.Height);
-
-            return composed;
         }
 
         #endregion
