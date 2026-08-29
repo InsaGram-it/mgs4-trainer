@@ -130,6 +130,7 @@ namespace MGS4CheatTrainer
             public const long DrebinPointsCopyOffset = 0x01C4;
             public const long RecoveryItemsUsedOffset = 0x0AE0;
             public const long FlashbacksViewedOffset = 0x5A34;
+            public const int SnapshotSize = 0x5A36;
         }
 
         // Instruction patches sourced from a pre-existing community cheat table (mgs4-snake-swiss.ct)

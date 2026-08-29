@@ -3,6 +3,7 @@ using System.Windows.Forms;
 using MGS4CheatTrainer;
 using static MGS4CheatTrainer.Constants;
 
+Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
 Application.EnableVisualStyles();
 
 Process? process = null;

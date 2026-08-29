@@ -2,16 +2,16 @@
 
 A memory trainer for the PC release of *Metal Gear Solid 4: Guns of the Patriots* (Master Collection, `mgs4.exe`). It attaches to the running game process and patches/reads its memory directly — no game files are modified.
 
-This is an unofficial fan project. It is **not affiliated with, endorsed by, or sponsored by Konami**. "Metal Gear Solid" and all related names/assets are trademarks of Konami. The wallpaper used in the trainer's UI is fan-made "Outer Haven" artwork of unclear original authorship — if you know/are the artist and want it credited or removed, please open an issue.
+This is an unofficial fan project. It is **not affiliated with, endorsed by, or sponsored by Konami**. "Metal Gear Solid" and all related names/assets are trademarks of Konami.
 
 ## Features
+
+**Stats tab** — live-editable run statistics (kills, headshots, Drebin Points, play time, item/weapon pickups, and more), read directly from the game's in-memory run-stats struct. Auto-refreshes every 500ms while a run is active; a field you're editing is left alone until you click away. Includes a live Emblems sub-tab showing which of MGS4's 40 completion emblems your current run would qualify for. See [Credits](#credits) for where these offsets came from.
 
 **Cheats tab**
 - Survival: Infinite Life, Infinite Stamina, Never Stress
 - Weapons & Items: Infinite Ammo, Never Reload, Infinite Throwables, Infinite Items, Infinite Suppressor
 - Stealth & Misc: Camo Always 100%, No Alerts, Infinite Battery
-
-**Stats tab** — live-editable run statistics (kills, headshots, Drebin Points, play time, item/weapon pickups, and more), read directly from the game's in-memory run-stats struct. Auto-refreshes every 500ms while a run is active; a field you're editing is left alone until you click away. See [Credits](#credits) for where these offsets came from.
 
 ## Requirements
 
