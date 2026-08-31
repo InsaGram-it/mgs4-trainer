@@ -121,8 +121,10 @@ namespace MGS4CheatTrainer
             public const long ScanningPlugUsesOffset = 0x019C;
             public const long PlayboyPagesOffset = 0x019E;
             public const long EmotionMagazinePagesOffset = 0x01A0;
+            public const long StandingTimeOffset = 0x01A4;
             public const long CrouchTimeOffset = 0x01A8;
             public const long CrawlTimeOffset = 0x01AC;
+            public const long OnBackTimeOffset = 0x01B0;
             public const long WallPressTimeOffset = 0x01B4;
             public const long BoxDrumTimerAOffset = 0x01B8;
             public const long BoxDrumTimerBOffset = 0x01BC;
@@ -225,6 +227,22 @@ namespace MGS4CheatTrainer
                 // mov word ptr [rdx+0xB52], ax -- battery charge write.
                 // Cave: only let it write if the new value is >= the current one (blocks drains, allows recharge).
                 public static readonly byte[] AobPattern = { 0x66, 0x89, 0x82, 0x52, 0x0B, 0x00, 0x00 };
+            }
+
+            public static class EnemyControl
+            {
+                // mov eax,[rdi+0x324] (enemy sleep timer read) followed by fixed context bytes that make the
+                // 6-byte instruction alone unique enough to scan for. Only PatchLength bytes get overwritten;
+                // the context bytes after them are read-only and must stay untouched.
+                public static readonly byte[] ScanPattern =
+                {
+                    0x8B, 0x87, 0x24, 0x03, 0x00, 0x00, 0xF7, 0xD8, 0x48, 0x63, 0xC8,
+                    0x48, 0xC1, 0xF9, 0x3F, 0x48, 0x83, 0xC1, 0x01, 0x74, 0x04,
+                };
+                public static readonly byte[] PatchBytes = { 0x8B, 0x87, 0x24, 0x03, 0x00, 0x00 };
+                public const int PatchLength = 6;
+                public const long HealthOffset = 0x314;
+                public const long SleepTimerOffset = 0x324;
             }
         }
     }

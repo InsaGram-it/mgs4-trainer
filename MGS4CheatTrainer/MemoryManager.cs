@@ -25,9 +25,34 @@ namespace MGS4CheatTrainer
 
             [DllImport("kernel32.dll", SetLastError = true)]
             public static extern IntPtr VirtualAllocEx(IntPtr hProcess, IntPtr lpAddress, uint dwSize, uint flAllocationType, uint flProtect);
+
+            [DllImport("kernel32.dll", SetLastError = true)]
+            public static extern IntPtr VirtualQueryEx(IntPtr hProcess, IntPtr lpAddress, out MEMORY_BASIC_INFORMATION lpBuffer, uint dwLength);
+
+            [DllImport("ntdll.dll")]
+            public static extern uint NtSuspendProcess(IntPtr processHandle);
+
+            [DllImport("ntdll.dll")]
+            public static extern uint NtResumeProcess(IntPtr processHandle);
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct MEMORY_BASIC_INFORMATION
+        {
+            public IntPtr BaseAddress;
+            public IntPtr AllocationBase;
+            public uint AllocationProtect;
+            public IntPtr RegionSize;
+            public uint State;
+            public uint Protect;
+            public uint Type;
         }
 
         private const uint PAGE_EXECUTE_READWRITE = 0x40;
+        private const uint PAGE_EXECUTE = 0x10;
+        private const uint PAGE_EXECUTE_READ = 0x20;
+        private const uint PAGE_EXECUTE_WRITECOPY = 0x80;
+        private const uint MEM_COMMIT = 0x1000;
 
         private const int PROCESS_VM_READ = 0x0010;
         private const int PROCESS_VM_WRITE = 0x0020;
@@ -94,13 +119,21 @@ namespace MGS4CheatTrainer
         /// </summary>
         public static bool WriteRawBytes(IntPtr processHandle, IntPtr address, byte[] bytes)
         {
-            bool hasOldProtect = NativeMethods.VirtualProtectEx(processHandle, address, (uint)bytes.Length, PAGE_EXECUTE_READWRITE, out uint oldProtect);
-            bool wrote = NativeMethods.WriteProcessMemory(processHandle, address, bytes, (uint)bytes.Length, out _);
-            if (hasOldProtect)
+            NativeMethods.NtSuspendProcess(processHandle);
+            try
             {
-                NativeMethods.VirtualProtectEx(processHandle, address, (uint)bytes.Length, oldProtect, out _);
+                bool hasOldProtect = NativeMethods.VirtualProtectEx(processHandle, address, (uint)bytes.Length, PAGE_EXECUTE_READWRITE, out uint oldProtect);
+                bool wrote = NativeMethods.WriteProcessMemory(processHandle, address, bytes, (uint)bytes.Length, out _);
+                if (hasOldProtect)
+                {
+                    NativeMethods.VirtualProtectEx(processHandle, address, (uint)bytes.Length, oldProtect, out _);
+                }
+                return wrote;
             }
-            return wrote;
+            finally
+            {
+                NativeMethods.NtResumeProcess(processHandle);
+            }
         }
 
         #region AOB scanning
@@ -120,7 +153,15 @@ namespace MGS4CheatTrainer
         }
 
         /// <summary>
-        /// Scans [startAddress, startAddress+size) for a byte pattern. mask: 'x' = exact match, '?' = wildcard, one char per pattern byte.
+        /// Scans [startAddress, startAddress+size) for a byte pattern, restricted to committed, executable
+        /// pages (any PAGE_EXECUTE* protection). A code patch has to land on a real .text instruction;
+        /// without this filter, a byte sequence that also happens to occur (by coincidence) in .data/.rdata
+        /// at a lower address would win as the "first match" and get patched instead, silently corrupting
+        /// unrelated data rather than the intended instruction. This game's code pages come back
+        /// PAGE_EXECUTE_READWRITE (not the plain PAGE_EXECUTE_READ CT's own signature-check filters for --
+        /// likely anti-tamper/packer behavior), so any executable protection is accepted here, not just the
+        /// non-writable ones; only pages with no execute bit at all (plain data) are excluded.
+        /// mask: 'x' = exact match, '?' = wildcard, one char per pattern byte.
         /// </summary>
         public static List<IntPtr> ScanForAllInstances(IntPtr processHandle, IntPtr startAddress, long size, byte[] pattern, string mask)
         {
@@ -128,28 +169,60 @@ namespace MGS4CheatTrainer
             const int bufferSize = 1_000_000;
             byte[] buffer = new byte[bufferSize];
 
-            long endAddress = startAddress.ToInt64() + size;
-            for (long address = startAddress.ToInt64(); address < endAddress; address += bufferSize - pattern.Length)
+            long moduleEnd = startAddress.ToInt64() + size;
+            long regionAddress = startAddress.ToInt64();
+
+            while (regionAddress < moduleEnd)
             {
-                int effectiveSize = (int)Math.Min(bufferSize, endAddress - address);
-                if (effectiveSize <= pattern.Length)
+                uint mbiSize = (uint)Marshal.SizeOf<MEMORY_BASIC_INFORMATION>();
+                if (NativeMethods.VirtualQueryEx(processHandle, new IntPtr(regionAddress), out var mbi, mbiSize) == IntPtr.Zero)
                 {
                     break;
                 }
 
-                bool success = NativeMethods.ReadProcessMemory(processHandle, new IntPtr(address), buffer, (uint)effectiveSize, out int bytesRead);
-                if (!success || bytesRead == 0)
+                long regionSize = mbi.RegionSize.ToInt64();
+                if (regionSize <= 0)
                 {
-                    continue;
+                    break;
                 }
 
-                for (int i = 0; i <= bytesRead - pattern.Length; i++)
+                long regionStart = mbi.BaseAddress.ToInt64();
+                long regionEnd = regionStart + regionSize;
+                long scanStart = Math.Max(regionStart, startAddress.ToInt64());
+                long scanEnd = Math.Min(regionEnd, moduleEnd);
+
+                uint baseProtect = mbi.Protect & 0xFF;
+                bool scannable = mbi.State == MEM_COMMIT &&
+                    (baseProtect == PAGE_EXECUTE || baseProtect == PAGE_EXECUTE_READ ||
+                     baseProtect == PAGE_EXECUTE_READWRITE || baseProtect == PAGE_EXECUTE_WRITECOPY);
+
+                if (scannable)
                 {
-                    if (IsMatch(buffer, i, pattern, mask))
+                    for (long address = scanStart; address < scanEnd; address += bufferSize - pattern.Length)
                     {
-                        found.Add(new IntPtr(address + i));
+                        int effectiveSize = (int)Math.Min(bufferSize, scanEnd - address);
+                        if (effectiveSize <= pattern.Length)
+                        {
+                            break;
+                        }
+
+                        bool success = NativeMethods.ReadProcessMemory(processHandle, new IntPtr(address), buffer, (uint)effectiveSize, out int bytesRead);
+                        if (!success || bytesRead == 0)
+                        {
+                            continue;
+                        }
+
+                        for (int i = 0; i <= bytesRead - pattern.Length; i++)
+                        {
+                            if (IsMatch(buffer, i, pattern, mask))
+                            {
+                                found.Add(new IntPtr(address + i));
+                            }
+                        }
                     }
                 }
+
+                regionAddress = regionEnd;
             }
 
             return found;
@@ -159,7 +232,6 @@ namespace MGS4CheatTrainer
 
         #region Code injection (trampolines)
 
-        private const uint MEM_COMMIT = 0x1000;
         private const uint MEM_RESERVE = 0x2000;
 
         /// <summary>
@@ -205,7 +277,19 @@ namespace MGS4CheatTrainer
             Func<IntPtr, IntPtr, byte[]> buildCaveBody)
         {
             string mask = new string('x', originalInstruction.Length);
-            var matches = ScanForAllInstances(processHandle, moduleBase, moduleSize, originalInstruction, mask);
+            return InjectTrampolineScanned(processHandle, moduleBase, moduleSize, originalInstruction, mask, originalInstruction.Length, buildCaveBody)?.Target;
+        }
+
+        public static (IntPtr Target, IntPtr Cave)? InjectTrampolineScanned(
+            IntPtr processHandle,
+            IntPtr moduleBase,
+            long moduleSize,
+            byte[] scanPattern,
+            string scanMask,
+            int patchLength,
+            Func<IntPtr, IntPtr, byte[]> buildCaveBody)
+        {
+            var matches = ScanForAllInstances(processHandle, moduleBase, moduleSize, scanPattern, scanMask);
             if (matches.Count == 0)
             {
                 return null;
@@ -225,17 +309,16 @@ namespace MGS4CheatTrainer
                 return null;
             }
 
-            int patternLength = originalInstruction.Length;
-            var jumpOut = new byte[patternLength];
+            var jumpOut = new byte[patchLength];
             jumpOut[0] = 0xE9;
             int rel32Out = (int)(cave.ToInt64() - (target.ToInt64() + 5));
             BitConverter.GetBytes(rel32Out).CopyTo(jumpOut, 1);
-            for (int i = 5; i < patternLength; i++)
+            for (int i = 5; i < patchLength; i++)
             {
                 jumpOut[i] = 0x90;
             }
 
-            return WriteRawBytes(processHandle, target, jumpOut) ? target : null;
+            return WriteRawBytes(processHandle, target, jumpOut) ? (target, cave) : null;
         }
 
         /// <summary>

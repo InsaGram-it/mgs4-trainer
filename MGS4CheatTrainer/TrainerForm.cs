@@ -16,7 +16,7 @@ namespace MGS4CheatTrainer
         private const int ValueLeft = 186;
         private const int ValueWidth = 110;
         private const int ButtonLeft = 302;
-        private const int ButtonWidth = 60;
+        private const int ButtonWidth = 80;
         private const int RowHeight = 32;
 
         private const int StatsPollIntervalMs = 500;
@@ -25,7 +25,7 @@ namespace MGS4CheatTrainer
         private readonly IntPtr _processHandle;
         private readonly IntPtr _baseAddress;
         private readonly long _moduleSize;
-        private readonly Label _status;
+        private readonly TextBox _status;
         private readonly TabControl _tabs;
         private readonly System.Windows.Forms.Timer _statsTimer;
 
@@ -42,7 +42,7 @@ namespace MGS4CheatTrainer
         // size and pushes right-pinned controls (the Set buttons) off past the visible edge once the
         // real layout runs. Reading the parent's current ClientSize fresh on every reflow sidesteps
         // that entirely.
-        private const int RowOuterMargin = 12;
+        private const int RowOuterMargin = 14;
         private const int RowGap = 6;
         private const int MinFieldWidth = 40;
 
@@ -87,6 +87,9 @@ namespace MGS4CheatTrainer
         private IntPtr? _noAlertsTarget;
         private IntPtr? _camoTarget;
         private IntPtr? _batteryTarget;
+        private IntPtr? _enemyControlTarget;
+        private IntPtr? _enemyControlModeAddr;
+        private ComboBox _enemyActionCombo = null!;
 
         public TrainerForm(Process gameProcess, IntPtr processHandle, IntPtr baseAddress, long moduleSize)
         {
@@ -99,44 +102,63 @@ namespace MGS4CheatTrainer
             AutoScaleDimensions = new SizeF(96f, 96f);
 
             Text = "MGS4 Trainer";
-            Width = 620;
-            Height = 620;
-            MinimumSize = new Size(460, 620);
+            Width = 960;
+            Height = 460;
+            MinimumSize = new Size(460, 960);
             FormBorderStyle = FormBorderStyle.Sizable;
             MaximizeBox = true;
             StartPosition = FormStartPosition.CenterScreen;
             TopMost = true;
             Font = new Font(UiFontFamily, 9.5f);
 
-            var bottomPanel = new Panel { Dock = DockStyle.Bottom, Height = 46 };
+            var bottomPanel = new Panel { Dock = DockStyle.Bottom, Height = 140 };
 
-            _status = new Label
+            _status = new TextBox
             {
                 Left = 12,
                 Top = 4,
-                Width = 260,
-                Height = 38,
+                Height = 108,
+                Multiline = true,
+                ReadOnly = true,
+                ScrollBars = ScrollBars.Vertical,
                 Text = "Ready.",
                 ForeColor = Color.DimGray,
             };
 
-            var trademark = new Label
+            var trademark = new LinkLabel
             {
                 Text = "Made by Insa",
                 AutoSize = true,
-                ForeColor = Color.Gray,
+                LinkColor = Color.Gray,
+                ActiveLinkColor = ColorAccent,
+                VisitedLinkColor = Color.Gray,
+                LinkBehavior = LinkBehavior.HoverUnderline,
                 Font = new Font(Font.FontFamily, 7.5f, FontStyle.Italic),
                 Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
+            };
+            trademark.Links.Add(0, trademark.Text.Length, "https://ko-fi.com/insagram");
+            trademark.LinkClicked += (_, e) =>
+            {
+                if (e.Link?.LinkData is string url)
+                {
+                    Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+                }
             };
 
             bottomPanel.Controls.Add(_status);
             bottomPanel.Controls.Add(trademark);
-            trademark.Left = bottomPanel.ClientSize.Width - trademark.Width - 12;
-            trademark.Top = bottomPanel.ClientSize.Height - trademark.Height - 4;
+            trademark.BringToFront();
+            _stretchOnly.Add((bottomPanel, _status));
+            Load += (_, _) =>
+            {
+                trademark.Left = bottomPanel.ClientSize.Width - trademark.Width - 12;
+                trademark.Top = bottomPanel.ClientSize.Height - trademark.Height - 4;
+            };
 
             _tabs = new TabControl { Dock = DockStyle.Fill };
             _tabs.TabPages.Add(BuildStatsTab());
-            _tabs.TabPages.Add(BuildCheatsTab());
+            _tabs.TabPages.Add(BuildPlayerTab());
+            _tabs.TabPages.Add(BuildEnvironmentTab());
             // A tab page only gets its real size once it's actually been selected/shown -- reflow
             // again each time the visible tab changes, to catch whichever page was still unsized
             // until now.
@@ -197,7 +219,20 @@ namespace MGS4CheatTrainer
 
         private static byte[] Nops(int count) => Enumerable.Repeat((byte)0x90, count).ToArray();
 
-        private void SetStatus(string message) => _status.Text = message;
+        // A pattern scan looks for the ORIGINAL, unpatched bytes. If this same cheat was enabled earlier
+        // in the current game session (even from a previous run of the trainer, or one that crashed before
+        // it could disable cleanly) and the game itself was never restarted, those bytes are still sitting
+        // there patched -- so the scan comes up empty even though nothing is actually wrong. Restarting
+        // MGS4 puts the original bytes back and lets the scan find them again.
+        private const string PatternNotFoundHint =
+            "pattern not found / cave alloc failed -- if MGS4 wasn't restarted since this was last enabled, its patched bytes are still there and no longer match; restart the game and try again";
+
+        private void SetStatus(string message)
+        {
+            _status.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}");
+            _status.SelectionStart = _status.TextLength;
+            _status.ScrollToCaret();
+        }
 
         // A background AOB scan (Task.Run) can still be in flight when the window closes; its
         // continuation resumes on this form's SynchronizationContext regardless, so every await
@@ -210,11 +245,11 @@ namespace MGS4CheatTrainer
             ReflowAll();
         }
 
-        #region Cheats tab (code-patch toggles)
+        #region Player tab (code-patch toggles)
 
-        private TabPage BuildCheatsTab()
+        private TabPage BuildPlayerTab()
         {
-            var page = new TabPage("Cheats");
+            var page = new TabPage("Player");
 
             var survival = BuildGroup("Survival", 12, out int survivalBottom,
                 MakeStaticToggle("Infinite Life", Constants.CodePatches.InfiniteLife.ModuleOffset, Constants.CodePatches.InfiniteLife.OriginalBytes),
@@ -263,7 +298,7 @@ namespace MGS4CheatTrainer
         // Freeze cheat at a known, always-valid static module offset.
         private CheckBox MakeStaticToggle(string label, long moduleOffset, byte[] originalBytes)
         {
-            var checkbox = new CheckBox { Text = label };
+            var checkbox = new LegibleCheckBox { Text = label };
             checkbox.CheckedChanged += (_, _) =>
             {
                 if (_suppressEvents)
@@ -284,7 +319,7 @@ namespace MGS4CheatTrainer
         // and the status shows "Scanning..." until the write actually lands.
         private CheckBox MakeAobFreezeToggle(string label, byte[] aobPattern, Func<IntPtr?> getTarget, Action<IntPtr?> setTarget)
         {
-            var checkbox = new CheckBox { Text = label };
+            var checkbox = new LegibleCheckBox { Text = label };
             checkbox.CheckedChanged += async (_, _) =>
             {
                 if (_suppressEvents)
@@ -305,7 +340,7 @@ namespace MGS4CheatTrainer
                         }
                         if (target == null)
                         {
-                            SetStatus($"{label}: pattern not found");
+                            SetStatus($"{label}: {PatternNotFoundHint}");
                             SetCheckedSilently(checkbox, false);
                             return;
                         }
@@ -343,7 +378,7 @@ namespace MGS4CheatTrainer
         // while it runs instead of letting the box flip instantly with no feedback.
         private CheckBox MakeAobPatchToggle(string label, Func<Task> toggleAction, Func<IntPtr?> getTarget)
         {
-            var checkbox = new CheckBox { Text = label };
+            var checkbox = new LegibleCheckBox { Text = label };
             checkbox.CheckedChanged += async (_, _) =>
             {
                 if (_suppressEvents)
@@ -387,9 +422,10 @@ namespace MGS4CheatTrainer
             _suppressEvents = false;
         }
 
-        private IntPtr? FindAob(byte[] pattern)
+        private IntPtr? FindAob(byte[] pattern) => FindAob(pattern, new string('x', pattern.Length));
+
+        private IntPtr? FindAob(byte[] pattern, string mask)
         {
-            string mask = new string('x', pattern.Length);
             var matches = MemoryManager.ScanForAllInstances(_processHandle, _baseAddress, _moduleSize, pattern, mask);
             return matches.Count > 0 ? matches[0] : null;
         }
@@ -408,7 +444,7 @@ namespace MGS4CheatTrainer
                 }
                 if (target == null)
                 {
-                    SetStatus("No Alerts: pattern not found");
+                    SetStatus($"No Alerts: {PatternNotFoundHint}");
                     return;
                 }
                 _noAlertsTarget = target;
@@ -452,7 +488,7 @@ namespace MGS4CheatTrainer
                 }
                 if (target == null)
                 {
-                    SetStatus("Camo Always 100%: pattern not found / cave alloc failed");
+                    SetStatus($"Camo Always 100%: {PatternNotFoundHint}");
                     return;
                 }
                 _camoTarget = target;
@@ -496,7 +532,7 @@ namespace MGS4CheatTrainer
                 }
                 if (target == null)
                 {
-                    SetStatus("Infinite Battery: pattern not found / cave alloc failed");
+                    SetStatus($"Infinite Battery: {PatternNotFoundHint}");
                     return;
                 }
                 _batteryTarget = target;
@@ -510,6 +546,128 @@ namespace MGS4CheatTrainer
                     return;
                 }
                 SetStatus(ok ? "Infinite Battery: disabled" : "Infinite Battery: write failed");
+            }
+        }
+
+        #endregion
+
+        #region Environment tab (enemy / world state, not the player)
+
+        private TabPage BuildEnvironmentTab()
+        {
+            var page = new TabPage("Environment");
+
+            var enemyGroup = new GroupBox { Text = "Enemy Control", Left = 12, Top = 12, Width = 330 };
+            var enemyEnable = MakeAobPatchToggle("Enemy Control", ToggleEnemyControl, () => _enemyControlTarget);
+            enemyEnable.Left = 12;
+            enemyEnable.Top = 22;
+            enemyEnable.Width = 300;
+
+            var actionLabel = new Label { Text = "Mode:", Left = 12, Top = 52, Width = 50 };
+            _enemyActionCombo = new ComboBox { Left = 66, Top = 49, Width = 252, DropDownStyle = ComboBoxStyle.DropDownList, Enabled = false };
+            _enemyActionCombo.Items.AddRange(new object[] { "Off", "Kill enemies (persistent)", "Put enemies to sleep (persistent)" });
+            _enemyActionCombo.SelectedIndex = 0;
+            _enemyActionCombo.SelectedIndexChanged += (_, _) =>
+            {
+                if (_enemyControlModeAddr is not { } modeAddr)
+                {
+                    return;
+                }
+                bool ok = MemoryManager.WriteRawBytes(_processHandle, modeAddr, new[] { (byte)_enemyActionCombo.SelectedIndex });
+                SetStatus(ok ? $"Enemy Control: mode set to \"{_enemyActionCombo.SelectedItem}\"" : "Enemy Control: mode write failed");
+            };
+
+            enemyGroup.Controls.Add(enemyEnable);
+            enemyGroup.Controls.Add(actionLabel);
+            enemyGroup.Controls.Add(_enemyActionCombo);
+            enemyGroup.Height = 92;
+            _stretchOnly.Add((enemyGroup, enemyEnable));
+            _stretchOnly.Add((enemyGroup, _enemyActionCombo));
+
+            page.Controls.Add(enemyGroup);
+            _stretchOnly.Add((page, enemyGroup));
+            return page;
+        }
+
+        // Enemy actor hook: the mode byte (0 off / 1 kill / 2 sleep) lives PAST the trailing jmp-back, as
+        // dead data nothing ever executes into -- the jmp-out redirect lands on cave+0, which has to be
+        // the first real instruction.
+        private async Task ToggleEnemyControl()
+        {
+            var checkbox = _pendingToggles["Enemy Control"];
+            if (checkbox.Checked)
+            {
+                byte[] scanPattern = Constants.CodePatches.EnemyControl.ScanPattern;
+                int patchLength = Constants.CodePatches.EnemyControl.PatchLength;
+                int modeByteOffset = 0;
+                var result = await Task.Run(() => MemoryManager.InjectTrampolineScanned(
+                    _processHandle, _baseAddress, _moduleSize,
+                    scanPattern, new string('x', scanPattern.Length), patchLength,
+                    (targetAddress, cave) =>
+                    {
+                        var body = new List<byte>();
+                        body.Add(0x48);
+                        body.Add(0xB8); // mov rax, imm64 (address of the mode byte, patched in below)
+                        int modeAddrImmOffset = body.Count;
+                        body.AddRange(new byte[8]); // placeholder
+                        body.AddRange(new byte[] { 0x80, 0x38, 0x01 }); // cmp byte ptr [rax],1
+                        int jne1 = body.Count;
+                        body.Add(0x75);
+                        body.Add(0x00);
+                        body.AddRange(new byte[] { 0xC7, 0x87, 0x14, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }); // mov dword ptr [rdi+0x314],0 (health)
+                        body[jne1 + 1] = (byte)(body.Count - (jne1 + 2));
+                        body.AddRange(new byte[] { 0x80, 0x38, 0x02 }); // cmp byte ptr [rax],2
+                        int jne2 = body.Count;
+                        body.Add(0x75);
+                        body.Add(0x00);
+                        body.AddRange(new byte[] { 0xC7, 0x87, 0x24, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }); // mov dword ptr [rdi+0x324],0 (sleep timer)
+                        body[jne2 + 1] = (byte)(body.Count - (jne2 + 2));
+                        body.AddRange(Constants.CodePatches.EnemyControl.PatchBytes); // original: mov eax,[rdi+0x324]
+                        IntPtr returnAddress = IntPtr.Add(targetAddress, patchLength);
+                        body.AddRange(MemoryManager.JumpRel32(cave, body.Count, returnAddress));
+
+                        modeByteOffset = body.Count;
+                        byte[] modeAddrBytes = BitConverter.GetBytes(cave.ToInt64() + modeByteOffset);
+                        for (int i = 0; i < 8; i++)
+                        {
+                            body[modeAddrImmOffset + i] = modeAddrBytes[i];
+                        }
+                        body.Add(0x00);
+
+                        return body.ToArray();
+                    }));
+
+                if (!IsUsable)
+                {
+                    return;
+                }
+                if (result == null)
+                {
+                    SetStatus($"Enemy Control: {PatternNotFoundHint}");
+                    return;
+                }
+                _enemyControlTarget = result.Value.Target;
+                _enemyControlModeAddr = IntPtr.Add(result.Value.Cave, modeByteOffset);
+                _suppressEvents = true;
+                _enemyActionCombo.SelectedIndex = 0;
+                _suppressEvents = false;
+                _enemyActionCombo.Enabled = true;
+                long enemyOffset = _enemyControlTarget.Value.ToInt64() - _baseAddress.ToInt64();
+                SetStatus($"Enemy Control: enabled at mgs4.exe+{enemyOffset:X}");
+            }
+            else
+            {
+                _enemyActionCombo.Enabled = false;
+                _enemyControlModeAddr = null;
+                if (_enemyControlTarget is { } target)
+                {
+                    bool ok = await Task.Run(() => MemoryManager.WriteRawBytes(_processHandle, target, Constants.CodePatches.EnemyControl.PatchBytes));
+                    if (!IsUsable)
+                    {
+                        return;
+                    }
+                    SetStatus(ok ? "Enemy Control: disabled" : "Enemy Control: write failed");
+                }
             }
         }
 
@@ -673,7 +831,7 @@ namespace MGS4CheatTrainer
 
         private TabPage BuildRunInfoTab()
         {
-            var page = new TabPage("Run Info");
+            var page = new TabPage("Run Info") { AutoScroll = true };
             int y = 12;
 
             _stageCodeBox = AddReadOnlyRow(page, ref y, "Stage Code");
@@ -691,7 +849,7 @@ namespace MGS4CheatTrainer
 
         private TabPage BuildCombatTab()
         {
-            var page = new TabPage("Combat");
+            var page = new TabPage("Combat") { AutoScroll = true };
             int y = 12;
 
             AddStatRow(page, ref y, "Kills", Constants.LiveStats.KillsOffset, StatType.UInt16);
@@ -707,13 +865,15 @@ namespace MGS4CheatTrainer
 
         private TabPage BuildMovementTab()
         {
-            var page = new TabPage("Movement");
+            var page = new TabPage("Movement") { AutoScroll = true };
             int y = 12;
 
             AddStatRow(page, ref y, "Prone Side Rolls", Constants.LiveStats.ProneSideRollsOffset, StatType.UInt16);
             AddStatRow(page, ref y, "Forward Rolls", Constants.LiveStats.ForwardRollsOffset, StatType.UInt16);
+            AddTicksRow(page, ref y, "Standing Time", Constants.LiveStats.StandingTimeOffset);
             AddTicksRow(page, ref y, "Crouch Time", Constants.LiveStats.CrouchTimeOffset);
             AddTicksRow(page, ref y, "Crawl Time", Constants.LiveStats.CrawlTimeOffset);
+            AddTicksRow(page, ref y, "On Back Time", Constants.LiveStats.OnBackTimeOffset);
             AddTicksRow(page, ref y, "Wall-Press Time", Constants.LiveStats.WallPressTimeOffset);
             AddTicksRow(page, ref y, "Box/Drum Timer A", Constants.LiveStats.BoxDrumTimerAOffset);
             AddTicksRow(page, ref y, "Box/Drum Timer B", Constants.LiveStats.BoxDrumTimerBOffset);
@@ -723,7 +883,7 @@ namespace MGS4CheatTrainer
 
         private TabPage BuildItemsSocialTab()
         {
-            var page = new TabPage("Items && Social");
+            var page = new TabPage("Items && Social") { AutoScroll = true };
             int y = 12;
 
             AddStatRow(page, ref y, "Weapon Pickups", Constants.LiveStats.WeaponPickupsOffset, StatType.UInt16);
@@ -878,7 +1038,7 @@ namespace MGS4CheatTrainer
         {
             var nameLabel = new Label { Text = label, Left = LabelLeft, Top = y + 3, Width = LabelWidth, AutoEllipsis = true };
             var textBox = new TextBox { Left = ValueLeft, Top = y, Width = ValueWidth };
-            var setButton = new Button { Text = "Set", Left = ButtonLeft, Top = y - 1, Width = ButtonWidth };
+            var setButton = new Button { Text = "Set", Left = ButtonLeft, Top = y - 1, Width = ButtonWidth, Height = 28 };
 
             var field = new StatField(label, offset, type, secondaryOffset);
             setButton.Click += (_, _) => SetStat(field, textBox);
@@ -923,7 +1083,7 @@ namespace MGS4CheatTrainer
             {
                 combo.Items.Add(level.Name);
             }
-            var setButton = new Button { Text = "Set", Left = ButtonLeft, Top = y - 1, Width = ButtonWidth };
+            var setButton = new Button { Text = "Set", Left = ButtonLeft, Top = y - 1, Width = ButtonWidth, Height = 28 };
             setButton.Click += (_, _) => SetDifficulty(combo);
 
             parent.Controls.Add(nameLabel);
@@ -1087,6 +1247,7 @@ namespace MGS4CheatTrainer
         private static readonly Color ColorSurface = Color.FromArgb(27, 31, 37);
         private static readonly Color ColorSurfaceRaised = Color.FromArgb(38, 43, 50);
         private static readonly Color ColorAccent = Color.FromArgb(90, 169, 230);
+        private static readonly Color ColorCheckedOn = Color.FromArgb(120, 224, 143);
         private static readonly Color ColorTextPrimary = Color.FromArgb(230, 232, 235);
         private static readonly Color ColorTextSecondary = Color.FromArgb(176, 183, 190);
 
@@ -1116,13 +1277,13 @@ namespace MGS4CheatTrainer
                         groupBox.Font = new Font(groupBox.Font, FontStyle.Bold);
                         break;
                     case CheckBox checkBox:
-                        checkBox.BackColor = Color.Transparent;
-                        checkBox.ForeColor = ColorTextPrimary;
-                        checkBox.FlatStyle = FlatStyle.Flat;
-                        checkBox.FlatAppearance.BorderColor = ColorAccent;
-                        checkBox.FlatAppearance.BorderSize = 2;
-                        checkBox.FlatAppearance.CheckedBackColor = ColorAccent;
-                        checkBox.FlatAppearance.MouseOverBackColor = ControlPaint.Light(ColorSurfaceRaised, 0.2f);
+                        checkBox.BackColor = ColorSurface;
+                        void UpdateCheckBoxLook(object? _ = null, EventArgs? __ = null)
+                        {
+                            checkBox.ForeColor = checkBox.Checked ? ColorCheckedOn : ColorTextPrimary;
+                        }
+                        UpdateCheckBoxLook();
+                        checkBox.CheckedChanged += UpdateCheckBoxLook;
                         break;
                     case Button button:
                         button.FlatStyle = FlatStyle.Flat;
@@ -1155,6 +1316,44 @@ namespace MGS4CheatTrainer
                 {
                     ApplyDarkTheme(control);
                 }
+            }
+        }
+
+        private sealed class LegibleCheckBox : CheckBox
+        {
+            private const int BoxSize = 18;
+
+            public LegibleCheckBox()
+            {
+                SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                e.Graphics.Clear(BackColor);
+
+                var boxRect = new Rectangle(0, (Height - BoxSize) / 2, BoxSize, BoxSize);
+                using (var fillBrush = new SolidBrush(Checked ? ColorCheckedOn : ColorSurfaceRaised))
+                {
+                    e.Graphics.FillRectangle(fillBrush, boxRect);
+                }
+                using (var borderPen = new Pen(ColorAccent, 2))
+                {
+                    e.Graphics.DrawRectangle(borderPen, boxRect);
+                }
+                if (Checked)
+                {
+                    using var checkPen = new Pen(Color.Black, 2.5f);
+                    e.Graphics.DrawLines(checkPen, new[]
+                    {
+                        new Point(boxRect.Left + 4, boxRect.Top + 9),
+                        new Point(boxRect.Left + 8, boxRect.Top + 14),
+                        new Point(boxRect.Left + 15, boxRect.Top + 4),
+                    });
+                }
+
+                var textRect = new Rectangle(BoxSize + 8, 0, Width - BoxSize - 8, Height);
+                TextRenderer.DrawText(e.Graphics, Text, Font, textRect, ForeColor, TextFormatFlags.VerticalCenter | TextFormatFlags.Left);
             }
         }
 
