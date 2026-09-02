@@ -8,6 +8,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Platforms>x64</Platforms>
     <UseWindowsForms>true</UseWindowsForms>
+    <Version>0.0.4</Version>
   </PropertyGroup>
 
 </Project>

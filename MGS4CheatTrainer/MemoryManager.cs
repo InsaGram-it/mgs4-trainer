@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using static MGS4CheatTrainer.Constants;
 
 namespace MGS4CheatTrainer
 {
@@ -100,6 +99,17 @@ namespace MGS4CheatTrainer
         public static bool WriteUInt16(IntPtr processHandle, IntPtr address, ushort value)
         {
             return NativeMethods.WriteProcessMemory(processHandle, address, BitConverter.GetBytes(value), 2, out _);
+        }
+
+        public static byte? ReadByte(IntPtr processHandle, IntPtr address)
+        {
+            byte[]? buffer = ReadMemoryBytes(processHandle, address, 1);
+            return buffer?[0];
+        }
+
+        public static bool WriteByte(IntPtr processHandle, IntPtr address, byte value)
+        {
+            return NativeMethods.WriteProcessMemory(processHandle, address, new[] { value }, 1, out _);
         }
 
         public static uint? ReadUInt32(IntPtr processHandle, IntPtr address)

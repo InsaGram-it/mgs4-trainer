@@ -93,7 +93,6 @@ namespace MGS4CheatTrainer
         public static class LiveStats
         {
             public const long LinkVarBufPointerOffset = 0x1C28B28;
-
             public const long CompletedPlaythroughsOffset = 0x0000;
             public const long TitleInitFieldOffset = 0x0004;
             public const long DifficultyOffset = 0x0006;
@@ -135,8 +134,108 @@ namespace MGS4CheatTrainer
             public const int SnapshotSize = 0x5A36;
         }
 
-        // Instruction patches sourced from a pre-existing community cheat table (mgs4-snake-swiss.ct)
-        // and confirmed byte-for-byte against this game build via `readabs base+<offset> bytearray <len>`.
+        // Outfit/FaceCamo bytes: static mgs4.exe+offset (no AOB, not update-safe -- source CT flags this
+        // itself). Confirmed via breakpoint that they're not real independent statics -- they alias
+        // linkvarbuf+0xB26/+0xB27 (same struct as LiveStats above), just fixed-looking because that
+        // struct sits at a constant spot in the module. Writing them updates the save correctly but the
+        // 3D model only re-reads at stage/save load, so change requires an area change or reload; traced
+        // the setter/validator functions and found no reload call to hook, so this isn't fixable without
+        // catching a *read* during an actual stage load. Name mapping is filled in from hand-testing
+        // in-game, not a documented source -- unmapped values still work, just show as a raw number.
+        //
+        // A related DWORD at linkvarbuf+0xB28 (right after FaceCamo) holds the OctoCamo pattern and DOES
+        // apply live (confirmed by forcing it via trampoline) -- not implemented because the in-game
+        // Customize menu reuses that same write to preview/cycle patterns, so pinning it while the menu
+        // is open crashes the game. Changing the outfit/costume directly (below) is the safer path.
+        public static class Appearance
+        {
+            public const long OutfitOffset = 0x23FED446;
+
+            public static readonly (string Name, byte Value)[] OutfitNames =
+            {
+                ("Octocamo", 0),
+                ("Middle East Rebel Disguise", 1),
+                ("South American Rebel Disguise", 2),
+                ("Civilian Disguise", 3),
+                ("Suit", 4),
+                ("Snake Black sleeve shirt/camo pants", 5),
+            };
+
+        }
+
+        public static class InventoryUnlocks
+        {
+            public const long ItemBase = -0x154;
+            public const long ItemStride = 0x48;
+
+            public static readonly (string Name, int Slot)[] OutfitSlots =
+            {
+                // ("OctoCamo (default -- likely always 1, no unlock needed)", 0x18),
+                ("Middle East Rebel Disguise", 0x19),
+                ("South American Rebel Disguise (Available for selection after ACT 2)", 0x1A),
+                ("Civilian Disguise (Available for selection after ACT 3)", 0x1B),
+                ("Altair", 0x1C),
+                ("Suit", 0x1D),
+            };
+
+            public static readonly (string Name, int Slot)[] FaceCamoSlots =
+            {
+                ("Young Snake", 0x1F),
+                ("Screaming Beauty", 0x20),
+                ("Laughing Beauty", 0x21),
+                ("Raging Beauty", 0x22),
+                ("Crying Beauty", 0x23),
+                ("Young Snake w/ Bandana", 0x24),
+                ("Otacon", 0x25),
+                ("Campbell", 0x26),
+                ("Big Boss", 0x27),
+                ("Drebin", 0x28),
+                ("MGS1", 0x29),
+                ("Raiden A", 0x2A),
+                ("Raiden B", 0x2B)
+            };
+
+        }
+
+        // The consumable/equipment item array itself -- same [pInv]-0x154 + 0x48*slot addressing as
+        // InventoryUnlocks above (same struct, slots 0x00-0x17 instead of the outfit/facecamo flags
+        // past 0x17), confirmed against the source CT's own Items group. Two different behaviors live
+        // in this same array, confirmed by hand in-game:
+        //  - Ration..Compress (0x00-0x04) are real stock counts -- current/max are an actual carried
+        //    amount, editable like any other stat.
+        //  - Solid Eye..Scanning Plug (0x05-0x11) are one-time equipment unlocks, not counts -- current
+        //    uses the exact same sentinel as the Outfit/FaceCamo ownership flags (0xFFFF = not owned,
+        //    1 = owned; max is irrelevant), so these reuse InventoryUnlocks' AddUnlockRow/_unlockRows
+        //    machinery directly rather than a numeric field.
+        public static class InventoryItems
+        {
+            public static readonly (string Name, int Slot)[] AmountSlots =
+            {
+                ("Ration", 0x00),
+                ("Noodles", 0x01),
+                ("Regain", 0x02),
+                ("Pentazemin", 0x03),
+                ("Compress", 0x04),
+            };
+
+            public static readonly (string Name, int Slot)[] UnlockSlots =
+            {
+                ("Solid Eye", 0x05),
+                ("MG Mk. II", 0x06),
+                ("Camera", 0x07),
+                ("C. Box A", 0x08),
+                ("Drum Can", 0x09),
+                ("iPod", 0x0A),
+                ("Radio", 0x0B),
+                ("Cigs", 0x0C),
+                ("Muna", 0x0D),
+                ("Bandana", 0x0E),
+                ("Stealth", 0x0F),
+                ("Syringe", 0x10),
+                ("Scanning Plug", 0x11),
+            };
+        }
+
         public static class CodePatches
         {
             // ---- Static-offset freeze cheats: NOP `OriginalBytes.Length` bytes at ModuleOffset to enable,
@@ -196,8 +295,16 @@ namespace MGS4CheatTrainer
 
             public static class InfiniteSuppressor
             {
-                // dec word [rax+0x30] -- suppressor durability decrement.
-                public static readonly byte[] AobPattern = { 0x66, 0xFF, 0x48, 0x30 };
+                // Two separate decrements fire per silenced shot
+                // durability right at the scan match (dec word ptr [rax+0x30])
+                // then the ammo-stock entry 8 bytes further into the same instruction stream (dec word ptr
+                // [rdi+rdx*8+0xA0]), with an untouched "lea rdx,[rcx+rcx]" index-compute instruction
+                // sitting between them that must be left alone.
+                public static readonly byte[] ScanPattern = { 0x66, 0xFF, 0x48, 0x30, 0x48, 0x8D, 0x14, 0x49 };
+                public const int Patch1Offset = 0;
+                public static readonly byte[] Patch1Original = { 0x66, 0xFF, 0x48, 0x30 };
+                public const int Patch2Offset = 8;
+                public static readonly byte[] Patch2Original = { 0x66, 0xFF, 0x8C, 0xD7, 0xA0, 0x00, 0x00, 0x00 };
             }
 
             // ---- AOB-based custom patch: enable/disable byte counts differ, so both are stored explicitly.
@@ -224,9 +331,25 @@ namespace MGS4CheatTrainer
 
             public static class InfiniteBattery
             {
-                // mov word ptr [rdx+0xB52], ax -- battery charge write.
-                // Cave: only let it write if the new value is >= the current one (blocks drains, allows recharge).
-                public static readonly byte[] AobPattern = { 0x66, 0x89, 0x82, 0x52, 0x0B, 0x00, 0x00 };
+                // The real drain write is "mov [r8+0xB52],cx"
+                // (fires while a battery-consuming item like Solid Eye/Scanning Plug is active); the real
+                // recharge write is a separate "mov [r9+0xB52],dx", left untouched. NOPping the
+                // drain write alone (it never gets to overwrite the current value with the lower computed
+                // one) stops the decrease, and one immediate top-off write to max on enable (both offsets
+                // live at linkvarbuf+0xB52/+0xB54)
+                public static readonly byte[] AobPattern = { 0x66, 0x41, 0x89, 0x88, 0x52, 0x0B, 0x00, 0x00 };
+                public const long CurrentOffset = 0xB52;
+                public const long MaxOffset = 0xB54;
+            }
+
+            public static class InventoryPointer
+            {
+                // rax lands on the inventory/weapon-table anchor here (cmp word ptr [rax+0x14],0),
+                // captured the same way as this file's other AOB-based pointer captures. Needed before
+                // Constants.InventoryUnlocks below (or any other [pInv]-relative address) resolves.
+                public static readonly byte[] ScanPattern = { 0x66, 0x83, 0x78, 0x14, 0x00, 0x7E, 0x20, 0xF6, 0x83 };
+                public static readonly byte[] PatchBytes = { 0x66, 0x83, 0x78, 0x14, 0x00 };
+                public const int PatchLength = 5;
             }
 
             public static class EnemyControl

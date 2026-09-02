@@ -6,12 +6,28 @@ This is an unofficial fan project. It is **not affiliated with, endorsed by, or 
 
 ## Features
 
-**Stats tab** — live-editable run statistics (kills, headshots, Drebin Points, play time, item/weapon pickups, and more), read directly from the game's in-memory run-stats struct. Auto-refreshes every 500ms while a run is active; a field you're editing is left alone until you click away. Includes a live Emblems sub-tab showing which of MGS4's 40 completion emblems your current run would qualify for. See [Credits](#credits) for where these offsets came from.
+**Stats tab** — live-editable run statistics, read directly from the game's in-memory run-stats struct. Auto-refreshes every 500ms while a run is active; a field you're editing is left alone until you click away. Split into sub-tabs:
+- Run Info: stage/difficulty, completed playthroughs, scenario progress, total play time, Drebin Points, continues, alert phases
+- Combat: kills, headshots, CQC uses, knife kills/knockouts, combat highs, special item use
+- Movement: prone/forward rolls, and H:M:S-readable standing/crouch/crawl/on-back/wall-press/box-drum time
+- Items & Social: weapon/item pickups, hold-ups, body searches, praises, items donated, syringe/scanning plug/recovery-item uses, playboy pages, flashbacks viewed
+- Emblems: live pass/fail preview for all 40 of MGS4's completion emblems against your current run's counters
 
-**Cheats tab**
+See [Credits](#credits) for where these offsets came from.
+
+**Player tab** — code-patch cheats:
 - Survival: Infinite Life, Infinite Stamina, Never Stress
 - Weapons & Items: Infinite Ammo, Never Reload, Infinite Throwables, Infinite Items, Infinite Suppressor
 - Stealth & Misc: Camo Always 100%, No Alerts, Infinite Battery
+
+**Experimental tab**
+- Appearance: directly edit Snake's Outfit and FaceCamo byte values and vest colour. Applies on the next area change or save load, not instantly.
+- Enemy Control: kill or put every enemy to sleep, persistently, with a mode dropdown (Off / Kill / Sleep).
+
+**Inventory tab** — enable "Inventory Pointer" first, then use its sub-tabs (or "Unlock All" to flip every checkbox below at once):
+- Outfits / FaceCamo: ownership checkboxes for outfits and face camo variants not normally available yet (Altair, Suit, the Beauty facecamos, Raiden, Big Boss, etc.) - check one and it becomes pickable in the game's own Customize menu.
+- Equipment: one-time unlock checkboxes for Solid Eye, MG Mk. II, Camera, Cardboard Box, Drum Can, iPod, Radio, Cigs, Muna, Bandana, Stealth, Syringe, Scanning Plug
+- Consumables: real stock counters for Ration/E. Bar/E. Drink/Pentazemin/Stupe, each with an Unlock-then-Set button and a "Max All Consumables" shortcut
 
 ## Requirements
 
@@ -23,7 +39,7 @@ This is an unofficial fan project. It is **not affiliated with, endorsed by, or 
 
 1. Start the game and load into a level.
 2. Run `MGS4CheatTrainer.exe` (as Administrator if it fails to attach).
-3. Toggle cheats on the Cheats tab, or edit stats on the Stats tab.
+3. Toggle cheats on the Player/Experimental tabs, unlock outfits/items on the Inventory tab, or edit stats on the Stats tab.
 
 ## Building from source
 
@@ -39,6 +55,7 @@ dotnet publish MGS4CheatTrainer/MGS4CheatTrainer.csproj -c Release -r win-x64 --
 
 ## Disclaimer
 
+- **Back up your save file before using this trainer.** Editing stats or unlocking items directly in memory can put your save into a state the game didn't expect — this can corrupt progress or interfere with unlocking certain achievements/trophies (e.g. the completion emblems, which are evaluated against your run's tracked counters). Keep a copy of your save so you can roll back if something looks wrong.
 - **Single-player/offline use only.** This tool reads and writes the game's process memory; do not use it in any online or competitive context.
 - Antivirus software and Windows SmartScreen may flag this executable as suspicious. This is expected and common for any tool that reads/writes another process's memory (the same category as Cheat Engine or similar). If you don't trust a downloaded binary, build it yourself from source — the code is short and readable.
 - Use at your own risk. No warranty; see [LICENSE](LICENSE).
@@ -46,4 +63,5 @@ dotnet publish MGS4CheatTrainer/MGS4CheatTrainer.csproj -c Release -r win-x64 --
 ## Credits
 
 - Live run-stats memory layout (`linkvarbuf` struct offsets, stage codes) sourced from [zexk/bbtracker](https://github.com/zexk/bbtracker)'s [`mgs4_research.md`](https://github.com/zexk/bbtracker/blob/master/docs/mgs4_research.md) reverse-engineering notes.
-- Code-patch offsets/patterns adapted from a pre-existing community cheat table (`mgs4-snake-swiss.ct`).
+- Code-patch offsets/patterns adapted from a pre-existing community cheat table (`mgs4-snake-swiss.ct`, v4), including the Inventory Pointer signature and the base item/weapon table layout.
+- Outfit/FaceCamo/Equipment ownership-flag locations and the byte-value → name mappings on the Appearance and Inventory tabs were found by hand, through live memory diffing while unlocking each one in-game.
