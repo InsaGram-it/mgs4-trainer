@@ -1,0 +1,71 @@
+name: Release
+
+# Fires on pushing a version tag (matches the repo's existing tag style, e.g. "0.0.2" -- no "v" prefix).
+# Push a tag with `git tag 0.0.5 && git push origin 0.0.5` to trigger a release build.
+on:
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    # Windows Forms (net8.0-windows) can only be built on a Windows runner.
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      # Framework-dependent single-file: still needs the .NET 8 Desktop Runtime installed on the
+      # target machine, but stays a single small exe instead of a folder of exe+dll+json files.
+      - name: Publish light (framework-dependent) build
+        run: >
+          dotnet publish MGS4CheatTrainer/MGS4CheatTrainer.csproj
+          -c Release -r win-x64 --self-contained false
+          -p:PublishSingleFile=true -p:DebugType=None
+          -o publish/light
+
+      # Fully self-contained single-file: bundles the whole .NET 8 runtime, works with zero setup.
+      - name: Publish full (self-contained) build
+        run: >
+          dotnet publish MGS4CheatTrainer/MGS4CheatTrainer.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None
+          -o publish/full
+
+      - name: Assemble light package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path package/light | Out-Null
+          Copy-Item publish/light/MGS4CheatTrainer.exe package/light/
+          Copy-Item release-assets/README-light.txt package/light/README.txt
+          Compress-Archive -Path package/light/* -DestinationPath "MGS4CheatTrainer-${{ github.ref_name }}-light.zip"
+
+      - name: Assemble full package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path package/full | Out-Null
+          Copy-Item publish/full/MGS4CheatTrainer.exe package/full/
+          Copy-Item release-assets/README-full.txt package/full/README.txt
+          Compress-Archive -Path package/full/* -DestinationPath "MGS4CheatTrainer-${{ github.ref_name }}-full.zip"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "MGS4 Cheat Trainer ${{ github.ref_name }}"
+          files: |
+            MGS4CheatTrainer-${{ github.ref_name }}-light.zip
+            MGS4CheatTrainer-${{ github.ref_name }}-full.zip
+          body: |
+            Two download options -- see the included README.txt in each zip for details:
+
+            - **light**: small download, needs the [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0) installed.
+            - **full**: ~150MB, fully self-contained, works with zero setup.
