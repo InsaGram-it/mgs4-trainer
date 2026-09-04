@@ -158,6 +158,7 @@ namespace MGS4CheatTrainer
             _tabs.TabPages.Add(BuildStatsTab());
             _tabs.TabPages.Add(BuildPlayerTab());
             _tabs.TabPages.Add(BuildInventoryTab());
+            _tabs.TabPages.Add(BuildWeaponsTab());
             _tabs.TabPages.Add(BuildExperimentalTab());
             // A tab page only gets its real size once it's actually been selected/shown -- reflow
             // again each time the visible tab changes, to catch whichever page was still unsized

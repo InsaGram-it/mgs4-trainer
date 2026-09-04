@@ -23,18 +23,8 @@ namespace MGS4CheatTrainer
         {
             var (page, content) = BuildPointerDependentSubTab("Consumables");
             var header = new Panel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
-            var amountNote = new Label
-            {
-                Text = "Real stock counts -- if not yet found in-game the button reads Unlock; once owned "
-                     + "it becomes Set so you can type an exact amount.",
-                Left = LabelLeft,
-                Top = 8,
-                AutoSize = true,
-                MaximumSize = new Size(300, 0),
-            };
-            _maxAllConsumablesButton = new Button { Text = "Max All Consumables", Left = LabelLeft, Top = amountNote.Bottom + 8, Width = 300, Height = 28, Enabled = false };
+            _maxAllConsumablesButton = new Button { Text = "Max All Consumables", Left = LabelLeft, Top = 8, Width = 300, Height = 28, Enabled = false };
             _maxAllConsumablesButton.Click += (_, _) => MaxAllItemAmounts();
-            header.Controls.Add(amountNote);
             header.Controls.Add(_maxAllConsumablesButton);
 
             var rowsPanel = new Panel { Dock = DockStyle.Fill, AutoScroll = true };

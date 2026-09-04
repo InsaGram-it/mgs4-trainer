@@ -13,7 +13,7 @@ namespace MGS4CheatTrainer
             ushort BodySearches, ushort HoldUps, uint BoxDrumA, uint BoxDrumB, ushort PlayboyPages,
             ushort SyringeUses, ushort ScanningPlugUses, uint WallPressTime, ushort ProneSideRolls,
             ushort ForwardRolls, uint CrawlTime, uint CrouchTime, ushort WeaponPickups,
-            ushort ItemPickups, ushort CombatHighs)
+            ushort ItemPickups, ushort CombatHighs, int LittleGrayCount)
         {
             public double Hours => PlayTimeTicks / 216000.0; // 60 ticks/sec * 3600 sec/hour
             public double KnifeDefeats => KnifeKills + KnifeKnockouts;
@@ -55,8 +55,8 @@ namespace MGS4CheatTrainer
                 m => m.ItemsDonated >= 50),
             ("HAWK", "≥25 praises from allies",
                 m => m.Praises >= 25),
-            ("LITTLE GRAY", "Collect all 69 weapons (needs weapon-inventory data, not tracked here)",
-                _ => null),
+            ("LITTLE GRAY", "Collect all 69 weapons (all weapon/item IDs 1-73 except 1911 Custom)",
+                m => m.LittleGrayCount >= 69),
             ("ANT", "≥50 body searches",
                 m => m.BodySearches >= 50),
             ("GIBBON", "≥50 hold-ups",
@@ -192,6 +192,20 @@ namespace MGS4CheatTrainer
             ushort Read16(long offset) => BitConverter.ToUInt16(snapshot, (int)offset);
             uint Read32(long offset) => BitConverter.ToUInt32(snapshot, (int)offset);
 
+            int littleGrayCount = 0;
+            for (int id = 1; id <= 73; id++)
+            {
+                if (id == 11)
+                {
+                    continue; // 1911 Custom -- excluded from this emblem's count
+                }
+                ushort state = Read16(Constants.LiveStats.WeaponStatesOffset + 2 * id);
+                if (state is 1 or 2)
+                {
+                    littleGrayCount++;
+                }
+            }
+
             var metrics = new EmblemMetrics(
                 Read16(Constants.LiveStats.DifficultyOffset),
                 Read16(Constants.LiveStats.AlertsOffset),
@@ -220,7 +234,8 @@ namespace MGS4CheatTrainer
                 Read32(Constants.LiveStats.CrouchTimeOffset),
                 Read16(Constants.LiveStats.WeaponPickupsOffset),
                 Read16(Constants.LiveStats.ItemPickupsOffset),
-                Read16(Constants.LiveStats.CombatHighsOffset));
+                Read16(Constants.LiveStats.CombatHighsOffset),
+                littleGrayCount);
 
             foreach (var (status, check) in _emblemRows)
             {

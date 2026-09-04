@@ -212,6 +212,7 @@ namespace MGS4CheatTrainer
             RefreshExperimental();
             RefreshInventoryUnlocks();
             RefreshItems();
+            RefreshWeapons();
             IntPtr? linkVarBuf = ResolveLinkVarBuf();
             byte[]? snapshot = linkVarBuf == null ? null : MemoryManager.ReadMemoryBytes(_processHandle, linkVarBuf.Value, Constants.LiveStats.SnapshotSize);
             RefreshEmblems(snapshot);
@@ -222,6 +223,12 @@ namespace MGS4CheatTrainer
                     SetStatus("Stats: no active run found (load a save first)");
                 }
                 return;
+            }
+
+            if (_infiniteRexHealthEnabled
+                && MemoryManager.ReadUInt32(_processHandle, IntPtr.Add(linkVarBuf.Value, (int)Constants.LiveStats.RexHealthMaxOffset)) is { } rexMax)
+            {
+                MemoryManager.WriteUInt32(_processHandle, IntPtr.Add(linkVarBuf.Value, (int)Constants.LiveStats.RexHealthOffset), rexMax);
             }
 
             foreach (var entry in _statFields)

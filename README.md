@@ -16,7 +16,7 @@ This is an unofficial fan project. It is **not affiliated with, endorsed by, or 
 See [Credits](#credits) for where these offsets came from.
 
 **Player tab** — code-patch cheats:
-- Survival: Infinite Life, Infinite Stamina, Never Stress
+- Survival: Infinite Life, Infinite Stamina, Never Stress, Infinite REX Health (Act 4 boss fight)
 - Weapons & Items: Infinite Ammo, Never Reload, Infinite Throwables, Infinite Items, Infinite Suppressor
 - Stealth & Misc: Camo Always 100%, No Alerts, Infinite Battery
 
@@ -25,9 +25,12 @@ See [Credits](#credits) for where these offsets came from.
 - Enemy Control: kill or put every enemy to sleep, persistently, with a mode dropdown (Off / Kill / Sleep).
 
 **Inventory tab** — enable "Inventory Pointer" first, then use its sub-tabs (or "Unlock All" to flip every checkbox below at once):
-- Outfits / FaceCamo: ownership checkboxes for outfits and face camo variants not normally available yet (Altair, Suit, the Beauty facecamos, Raiden, Big Boss, etc.) - check one and it becomes pickable in the game's own Customize menu.
+- Outfits / FaceCamo / Body / Music: ownership checkboxes for outfits, face camo variants, vest/OctoCamo body colours, and iPod tracks not normally available yet (Altair, Suit, the Beauty facecamos, Raiden, Big Boss, Khaki, Navy Blue, Snake Eater, Theme of Solid Snake, etc.) - check one and it becomes pickable in the game's own Customize/iPod menu.
 - Equipment: one-time unlock checkboxes for Solid Eye, MG Mk. II, Camera, Cardboard Box, Drum Can, iPod, Radio, Cigs, Muna, Bandana, Stealth, Syringe, Scanning Plug
 - Consumables: real stock counters for Ration/E. Bar/E. Drink/Pentazemin/Stupe, each with an Unlock-then-Set button and a "Max All Consumables" shortcut
+- Ammo: real ammo-type counters, persistent across area changes/saves. One row per ammo type/caliber rather than per weapon -- some guns share a pool, and Mk.2 alone has 5 (base round plus its 4 non-lethal "emotion" rounds). Each has a Set button plus a "Max All Ammo" shortcut.
+
+**Weapons tab** - real ownership checkbox for every weapon in the game (handguns through launchers, explosives, melee), no pointer needed; checking a never-owned weapon actually grants it in-game. "Unlock All" flips every checkbox at once.
 
 ## Requirements
 

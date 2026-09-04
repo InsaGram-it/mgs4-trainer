@@ -9,15 +9,28 @@ namespace MGS4CheatTrainer
         private IntPtr? _noAlertsTarget;
         private IntPtr? _camoTarget;
         private IntPtr? _batteryTarget;
+        private bool _infiniteRexHealthEnabled;
 
         private TabPage BuildPlayerTab()
         {
             var page = new TabPage("Player");
 
+            var rexHealthCheckbox = new LegibleCheckBox { Text = "Infinite REX Health" };
+            rexHealthCheckbox.CheckedChanged += (_, _) =>
+            {
+                if (_suppressEvents)
+                {
+                    return;
+                }
+                _infiniteRexHealthEnabled = rexHealthCheckbox.Checked;
+                SetStatus($"Infinite REX Health: {(rexHealthCheckbox.Checked ? "enabled" : "disabled")}");
+            };
+
             var survival = BuildGroup("Survival", 12, out int survivalBottom,
                 MakeStaticToggle("Infinite Life", Constants.CodePatches.InfiniteLife.ModuleOffset, Constants.CodePatches.InfiniteLife.OriginalBytes),
                 MakeStaticToggle("Infinite Stamina", Constants.CodePatches.InfiniteStamina.ModuleOffset, Constants.CodePatches.InfiniteStamina.OriginalBytes),
-                MakeStaticToggle("Never Stress", Constants.CodePatches.NeverStress.ModuleOffset, Constants.CodePatches.NeverStress.OriginalBytes));
+                MakeStaticToggle("Never Stress", Constants.CodePatches.NeverStress.ModuleOffset, Constants.CodePatches.NeverStress.OriginalBytes),
+                rexHealthCheckbox);
 
             var weapons = BuildGroup("Weapons && Items", survivalBottom + 10, out int weaponsBottom,
                 MakeStaticToggle("Infinite Ammo", Constants.CodePatches.InfiniteAmmo.ModuleOffset, Constants.CodePatches.InfiniteAmmo.OriginalBytes),

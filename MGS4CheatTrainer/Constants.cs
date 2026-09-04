@@ -129,6 +129,9 @@ namespace MGS4CheatTrainer
             public const long BoxDrumTimerBOffset = 0x01BC;
             public const long DrebinPointsOffset = 0x01C0;
             public const long DrebinPointsCopyOffset = 0x01C4;
+            public const long RexHealthOffset = 0x0B70;
+            public const long RexHealthMaxOffset = 0x0B74;
+            public const long WeaponStatesOffset = 0x01D4;
             public const long RecoveryItemsUsedOffset = 0x0AE0;
             public const long FlashbacksViewedOffset = 0x5A34;
             public const int SnapshotSize = 0x5A36;
@@ -159,8 +162,176 @@ namespace MGS4CheatTrainer
                 ("Civilian Disguise", 3),
                 ("Suit", 4),
                 ("Snake Black sleeve shirt/camo pants", 5),
+                ("Altair", 7),
             };
 
+        }
+
+        public static class Weapons
+        {
+            public const long AmmoBaseOffset = -0x2598;
+            public const int AmmoStride = 0x18;
+            public const ushort LockedSentinel = 0xFFFF;
+
+            // Ammo-type slots discovered by live-dumping this array (0x00-0x42 is real data, past that
+            // is unrelated memory). Deliberately a flat (Label, Slot) list rather than one-slot-per-gun:
+            // several weapons share an ammo pool by caliber (e.g. G3A3/Mk.17 both draw from the same
+            // 7.62mm slot), and Mk.2 alone has 5 separate slots (base tranq round + 4 non-lethal
+            // "emotion" rounds).
+            public static readonly (string Label, int Slot)[] AmmoSlots =
+            {
+                ("Mk.2 Pistol (Tranq.)", 0x00),
+                ("Mk.2 Scream Ammo", 0x01),
+                ("Mk.2 Laugh Ammo", 0x02),
+                ("Mk.2 Rage Ammo", 0x03),
+                ("Mk.2 Cry Ammo", 0x04),
+                ("Mosin-Nagant Tranq. Normal (7,62mm)", 0x05),
+                ("Mosin-Nagant Tranq. Scream (7,62mm)", 0x06),
+                ("Mosin-Nagant Tranq. Laugh (7,62mm)", 0x07),
+                ("Mosin-Nagant Tranq. Rage (7,62mm)", 0x08),
+                ("Mosin-Nagant Tranq. Cry (7,62mm)", 0x09),
+                ("Ammo 9x23mm (Race Gun)", 0x0A),
+                ("Ammo cal .45 (Operator)", 0x0B),
+                ("Thor .45-70 Ammo", 0x0C),
+                ("Ammo cal .50 AE (D.E.)", 0x0D),
+                ("Ammo cal .50 BMG (M82A2)", 0x0E),
+                ("Ammo 4,6x30mm (MP7)", 0x0F),
+                ("Ammo 5,45x39mm (AN94)", 0x10),
+                ("Ammo 5,56mm (AK-102)", 0x11),
+                ("Ammo 7,62mm (Mk.17)", 0x14),
+                ("Ammo 7,62x54mmR (SVD)", 0x15),
+                ("Ammo 9x18mm (VZ.83)", 0x16),
+                ("Ammo 9x19mm (G18C)", 0x17),
+                ("Sniper Ammo 9x39mm (VSS)", 0x18),
+                ("Ammo 7,62x67mm (DSR-1)", 0x19),
+                ("Ammo lead ball (Tanegashima)", 0x1A),
+                ("Ammo 12GA. (PLT 00)", 0x1B),
+                ("Ammo Balls", 0x1C),
+                ("Ammo Vortex (Tranq. Balls)", 0x1D),
+                ("Ammo 40mm (Grenade)", 0x1F),
+                ("Ammo 40mm (White Phosphorus Grenade)", 0x20),
+                ("Ammo 40mm (Stun Grenade)", 0x21),
+                ("Ammo 40mm (Smoke Grenade)", 0x22),
+                ("Ammo 25mm A.B.G.", 0x23),
+                ("Ammo FIM-92A", 0x24),
+                ("Ammo Javelin", 0x25),
+                ("Ammo RPG-7", 0x26),
+                ("Ammo M72A3", 0x27),
+                ("Grenade", 0x28),
+                ("WP Grenade (M34 White Phosphorus)", 0x29),
+                ("Stun Grenade", 0x2A),
+                ("Chaff Grenade", 0x2B),
+                ("Smoke Grenade", 0x2C),
+                ("Smoke Grenade (Red)", 0x2D),
+                ("Smoke Grenade (Green)", 0x2E),
+                ("Smoke Grenade (Yellow)", 0x2F),
+                ("Smoke Grenade (Blue)", 0x30),
+                ("Petrol Bomb (Molotov)", 0x31),
+                ("Claymore", 0x34),
+                ("Sleep Gas Mine", 0x35),
+                ("C4", 0x36),
+                ("Sleep Gas Satchel", 0x37),
+                ("Playboy", 0x39),
+                ("Emotion Magazine", 0x3A),
+                ("Rail Gun Ammo", 0x3B),
+            };
+        }
+
+        // Real weapon *ownership* table -- distinct from Weapons above, which is only ammo. Found from
+        // a user-supplied "MGS4_UNLOCK.CT" (community table, author "khuong") whose every entry is a
+        // plain static address, no AssemblerScript anywhere -- confirmed by cross-checking its item
+        // offsets against our own dynamically-captured Inventory Pointer: its Ration entry
+        // (mgs4.exe+1D81E70+24FC) and Solid Eye entry (+2664) are exactly ItemStride*5 apart, matching
+        // InventoryUnlocks.ItemStride, meaning mgs4.exe+1D81E70 is a static, ASLR-relative-only offset
+        // to the very same struct Inventory Pointer captures dynamically -- so this table needs no
+        // pointer at all. Confirmed live: writing 2 ("Unlocked - usable") to a weapon never owned before
+        // (GSR) actually granted it in-game, unlike Constants.Weapons's array (ammo-only, doesn't gate
+        // real ownership) or linkvarbuf+0x1D4 (doesn't survive a save reload). Per-weapon layout is
+        // State (2 Bytes: 0 Not found / 1 Found - ID locked / 2 Unlocked - usable / 65535 Locked) at
+        // TableBaseOffset+StateBase+StateStride*id; the CT also exposes an "infinite ammo" byte at
+        // State+0x16 per weapon, not used here since Player tab already has a global Infinite Ammo cheat.
+        public static class WeaponUnlocks
+        {
+            public const long TableBaseOffset = 0x1D81E70;
+            public const long StateBase = 0x71A;
+            public const long StateStride = 0x50;
+            public const ushort Unlocked = 2;
+            public const ushort Locked = 0xFFFF;
+
+            public static readonly (string Name, int Id)[] Names =
+            {
+                ("Stun Knife", 0x01),
+                ("Mk.2 Pistol", 0x02),
+                ("Operator", 0x03),
+                ("Mk.23", 0x04),
+                ("PMM", 0x05),
+                ("Five-seveN", 0x06),
+                ("GSR", 0x07),
+                ("D.E.", 0x08),
+                ("D.E. (L.B.)", 0x09),
+                ("Thor .45-70", 0x0A),
+                ("1911 Custom", 0x0B),
+                ("Race Gun", 0x0C),
+                ("Solar Gun", 0x0D),
+                ("PSS", 0x0E),
+                ("G18C", 0x0F),
+                ("Type 17", 0x10),
+                ("MP7", 0x11),
+                ("MP5SD2", 0x12),
+                ("M10", 0x13),
+                ("P90", 0x14),
+                ("Bizon", 0x15),
+                ("Patriot", 0x16),
+                ("VZ.83", 0x17),
+                ("M4 Custom", 0x18),
+                ("AK-102", 0x19),
+                ("G3A3", 0x1A),
+                ("AN94", 0x1B),
+                ("FAL Carbine", 0x1C),
+                ("Tanegashima", 0x1D),
+                ("Mk.17", 0x1E),
+                ("XM8", 0x1F),
+                ("Mk.46 Mod1", 0x20),
+                ("HK21E", 0x21),
+                ("PKM", 0x22),
+                ("M60E4", 0x23),
+                ("Twin Barrel", 0x24),
+                ("M870 Custom", 0x25),
+                ("Saiga12", 0x26),
+                ("VSS", 0x27),
+                ("M82A2", 0x28),
+                ("DSR-1", 0x29),
+                ("M14 EBR", 0x2A),
+                ("Mosin-Nagant", 0x2B),
+                ("SVD", 0x2C),
+                ("Rail Gun", 0x2D),
+                ("MGL-140", 0x2E),
+                ("XM25", 0x2F),
+                ("FIM-92A", 0x30),
+                ("Javelin", 0x31),
+                ("RPG-7", 0x32),
+                ("M72A3", 0x33),
+                ("Grenade", 0x34),
+                ("WP Grenade", 0x35),
+                ("Stun Grenade", 0x36),
+                ("Chaff Grenade", 0x37),
+                ("Smoke Grenade", 0x38),
+                ("Smoke Grenade (Red)", 0x39),
+                ("Smoke Grenade (Green)", 0x3A),
+                ("Smoke Grenade (Yellow)", 0x3B),
+                ("Smoke Grenade (Blue)", 0x3C),
+                ("Petrol Bomb", 0x3D),
+                ("Magazine", 0x3E),
+                ("Claymore", 0x40),
+                ("SG Mine", 0x41),
+                ("C4", 0x42),
+                ("SG Satchel", 0x43),
+                ("SOP Destabilizer", 0x44),
+                ("Playboy", 0x45),
+                ("Emotion Magazine", 0x46),
+                ("Mantis Doll", 0x47),
+                ("Sorrow Doll", 0x48),
+            };
         }
 
         public static class InventoryUnlocks
@@ -195,6 +366,61 @@ namespace MGS4CheatTrainer
                 ("Raiden B", 0x2B)
             };
 
+            public static readonly (string Name, int Slot)[] BodyColourSlots =
+            {
+                ("Khaki", 0x2C),
+                ("Olive", 0x2D),
+                ("Black", 0x2E),
+                ("Gray", 0x2F),
+                ("Navy Blue", 0x30),
+                ("Green", 0x31),
+                ("Blue", 0x32),
+                ("Red", 0x33),
+                ("Orange", 0x34),
+                ("Tan", 0x35),
+            };
+
+            public static readonly (string Name, int Slot)[] SongSlots =
+            {
+                ("Warhead Storage", 0x3C),
+                ("On Alert", 0x3D),
+                ("Metal Gear Solid Theme (Document Remix)", 0x3E),
+                ("On the Edge", 0x3F),
+                ("'Yell' Dead Cell", 0x40),
+                ("Sailor", 0x41),
+                ("Show Time", 0x42),
+                ("Old L.A. 2040", 0x43),
+                ("Policenauts End Time", 0x44),
+                ("Love Theme Action", 0x45),
+                ("Lunar Knights Main Theme", 0x46),
+                ("Flowing Destiny", 0x47),
+                ("Beyond the Bounds", 0x48),
+                ("Inori no Uta", 0x49),
+                ("Bio Hazard", 0x4A),
+                ("One Night in Neo Kobe City", 0x4B),
+                ("Theme of Solid Snake", 0x4C),
+                ("Zanzibarland Breeze", 0x4D),
+                ("Metal Gear Solid 20 Years History (Part 2)", 0x4E),
+                ("Metal Gear Solid 20 Years History (Part 3)", 0x4F),
+                ("Big Boss", 0x50),
+                ("The Essence of Vince", 0x51),
+                ("The Subject of Duality", 0x52),
+                ("Theme of Tara", 0x53),
+                ("Subsistance Action", 0x54),
+                ("Shin Bokura no Taiyou Theme", 0x55),
+                ("MPO+ Theme", 0x56),
+                ("The Fury", 0x57),
+                ("Level 3 Warning", 0x58),
+                ("The Best is Yet to Come", 0x59),
+                ("Rock Me Baby", 0x5A),
+                ("Destiny Calls", 0x5B),
+                ("Boktai 2 Theme", 0x5C),
+                ("Snake Eater", 0x5D),
+                ("Gekko", 0x5E),
+                ("Desperate Chase", 0x5F),
+                ("Midnight Shadow", 0x60),
+                ("Mobs Alive", 0x61),
+            };
         }
 
         // The consumable/equipment item array itself -- same [pInv]-0x154 + 0x48*slot addressing as

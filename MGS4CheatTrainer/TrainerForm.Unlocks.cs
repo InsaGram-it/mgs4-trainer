@@ -41,8 +41,11 @@ namespace MGS4CheatTrainer
             var subTabs = new TabControl { Dock = DockStyle.Fill };
             subTabs.TabPages.Add(BuildOutfitUnlocksSubTab());
             subTabs.TabPages.Add(BuildFaceCamoUnlocksSubTab());
+            subTabs.TabPages.Add(BuildBodyColourUnlocksSubTab());
+            subTabs.TabPages.Add(BuildMusicUnlocksSubTab());
             subTabs.TabPages.Add(BuildEquipmentUnlocksSubTab());
             subTabs.TabPages.Add(BuildConsumablesSubTab());
+            subTabs.TabPages.Add(BuildWeaponAmmoSubTab());
             subTabs.SelectedIndexChanged += (_, _) => OnVisibleTabChanged();
 
             page.Controls.Add(subTabs);
@@ -66,6 +69,28 @@ namespace MGS4CheatTrainer
             var (page, content) = BuildPointerDependentSubTab("FaceCamo");
             int y = 12;
             foreach (var (name, slot) in Constants.InventoryUnlocks.FaceCamoSlots)
+            {
+                AddUnlockRow(content, ref y, name, slot);
+            }
+            return page;
+        }
+
+        private TabPage BuildBodyColourUnlocksSubTab()
+        {
+            var (page, content) = BuildPointerDependentSubTab("Body");
+            int y = 12;
+            foreach (var (name, slot) in Constants.InventoryUnlocks.BodyColourSlots)
+            {
+                AddUnlockRow(content, ref y, name, slot);
+            }
+            return page;
+        }
+
+        private TabPage BuildMusicUnlocksSubTab()
+        {
+            var (page, content) = BuildPointerDependentSubTab("Music");
+            int y = 12;
+            foreach (var (name, slot) in Constants.InventoryUnlocks.SongSlots)
             {
                 AddUnlockRow(content, ref y, name, slot);
             }
@@ -180,6 +205,16 @@ namespace MGS4CheatTrainer
                 box.Enabled = enabled;
                 button.Enabled = enabled;
             }
+            _maxAllWeaponAmmoButton.Enabled = enabled;
+            foreach (var (_, box, button) in _weaponAmountFields.Values)
+            {
+                box.Enabled = enabled;
+                button.Enabled = enabled;
+                if (!enabled)
+                {
+                    box.Text = string.Empty;
+                }
+            }
             foreach (var warning in _pointerRequiredWarnings)
             {
                 warning.Visible = !enabled;
@@ -197,7 +232,7 @@ namespace MGS4CheatTrainer
         private void UnlockAllInventorySlots()
         {
             DialogResult confirm = MessageBox.Show(
-                $"This will unlock all {_unlockRows.Count} outfit/facecamo/equipment slots at once. Continue?",
+                $"This will unlock all {_unlockRows.Count} outfit/facecamo/body/music/equipment slots at once. Continue?",
                 "Unlock All",
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Warning,
